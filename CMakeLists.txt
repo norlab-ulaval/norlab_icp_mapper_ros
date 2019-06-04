@@ -11,6 +11,8 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
 )
 
+find_package(libpointmatcher CONFIG)
+
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
 
@@ -115,6 +117,7 @@ catkin_package(
 ## Your package locations should be listed before other locations
 include_directories(
   ${catkin_INCLUDE_DIRS}
+  ${libpointmatcher_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -145,6 +148,7 @@ add_executable(mapper_node src/mapper_node.cpp)
 ## Specify libraries to link a library or executable target against
 target_link_libraries(mapper_node
   ${catkin_LIBRARIES}
+  ${libpointmatcher_LIBRARIES}
 )
 
 #############

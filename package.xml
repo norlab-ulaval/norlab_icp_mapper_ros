@@ -51,12 +51,17 @@
   <buildtool_depend>catkin</buildtool_depend>
 
   <build_depend>roscpp</build_depend>
+  <build_depend>sensor_msgs</build_depend>
   <build_depend>libpointmatcher_ros</build_depend>
   <build_depend>libpointmatcher</build_depend>
 
   <build_export_depend>roscpp</build_export_depend>
+  <build_export_depend>sensor_msgs</build_export_depend>
+  <build_export_depend>libpointmatcher_ros</build_export_depend>
+  <build_export_depend>libpointmatcher</build_export_depend>
 
   <exec_depend>roscpp</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>libpointmatcher_ros</exec_depend>
   <exec_depend>libpointmatcher</exec_depend>
 

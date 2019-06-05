@@ -9,6 +9,7 @@ project(norlab_icp_mapper)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   roscpp
+  sensor_msgs
   libpointmatcher_ros
 )
 
@@ -106,7 +107,7 @@ find_package(libpointmatcher CONFIG)
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES norlab_icp_mapper
-  CATKIN_DEPENDS roscpp libpointmatcher_ros
+  CATKIN_DEPENDS roscpp sensor_msgs libpointmatcher_ros
 #  DEPENDS system_lib
 )
 

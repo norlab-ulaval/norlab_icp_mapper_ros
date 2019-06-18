@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8.3)
 project(norlab_icp_mapper)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-# add_compile_options(-std=c++11)
+add_compile_options(-std=c++11)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -10,6 +10,8 @@ project(norlab_icp_mapper)
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   sensor_msgs
+  tf2_ros
+  tf2
   libpointmatcher_ros
 )
 
@@ -107,7 +109,7 @@ find_package(libpointmatcher CONFIG)
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES norlab_icp_mapper
-  CATKIN_DEPENDS roscpp sensor_msgs libpointmatcher_ros
+  CATKIN_DEPENDS roscpp sensor_msgs tf2_ros tf2 libpointmatcher_ros
 #  DEPENDS system_lib
 )
 

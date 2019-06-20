@@ -20,9 +20,7 @@ ros::Publisher mapPublisher;
 ros::Publisher odomPublisher;
 std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 tf2_ros::Buffer tfBuffer;
-std::unique_ptr<tf2_ros::TransformListener> tfListener;
 std::mutex mapTfLock;
-std::thread mapTfPublisherThread;
 
 void mapTfPublisherLoop()
 {
@@ -104,9 +102,9 @@ int main(int argc, char** argv)
 	odomPublisher = n.advertise<nav_msgs::Odometry>("odom_out", 1);
 	
 	tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
-	tfListener = std::unique_ptr<tf2_ros::TransformListener>(new tf2_ros::TransformListener(tfBuffer));
+	tf2_ros::TransformListener tfListener(tfBuffer);
 	
-	mapTfPublisherThread = std::thread(mapTfPublisherLoop);
+	std::thread mapTfPublisherThread = std::thread(mapTfPublisherLoop);
 	
 	ros::spin();
 	

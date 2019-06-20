@@ -3,6 +3,9 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
+#include <memory>
+#include <mutex>
+#include <thread>
 
 Mapper mapper;
 std::string odomFrame;
@@ -15,40 +18,46 @@ PM::TransformationParameters mapToOdom;
 ros::Subscriber sub;
 ros::Publisher mapPublisher;
 ros::Publisher odomPublisher;
-tf2_ros::TransformBroadcaster* tfBroadcaster;
+std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 tf2_ros::Buffer tfBuffer;
-tf2_ros::TransformListener* tfListener;
+std::unique_ptr<tf2_ros::TransformListener> tfListener;
+std::mutex mapTfLock;
+std::thread mapTfPublisherThread;
 
-void publishMapTf()
+void mapTfPublisherLoop()
 {
-	geometry_msgs::TransformStamped mapToOdomTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<T>(mapToOdom);
-
-	mapToOdomTf.header.frame_id = mapFrame;
-	mapToOdomTf.child_frame_id = odomFrame;
-	mapToOdomTf.header.stamp = ros::Time::now();
-
-	tfBroadcaster->sendTransform(mapToOdomTf);
+	ros::Rate publishRate(10);
+	
+	while(ros::ok())
+	{
+		mapTfLock.lock();
+		geometry_msgs::TransformStamped mapToOdomTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<T>(mapToOdom);
+		mapToOdomTf.header.frame_id = mapFrame;
+		mapToOdomTf.child_frame_id = odomFrame;
+		mapToOdomTf.header.stamp = ros::Time::now();
+		tfBroadcaster->sendTransform(mapToOdomTf);
+		mapTfLock.unlock();
+		
+		publishRate.sleep();
+	}
 }
 
 void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
 {
 	ros::Time timeStamp = cloudMsgIn.header.stamp;
 	PM::DataPoints cloud = PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(cloudMsgIn);
-
+	
 	geometry_msgs::TransformStamped sensorToOdomTf = tfBuffer.lookupTransform(odomFrame, sensorFrame, ros::Time(0), ros::Duration(3));
 	PM::TransformationParameters sensorToOdom = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(sensorToOdomTf);
 	PM::TransformationParameters sensorToMap = mapToOdom.inverse() * sensorToOdom;
 	PM::DataPoints transformedCloud = transformation->compute(cloud, sensorToMap);
-
+	
 	mapper.updateMap(transformedCloud);
 	const PM::DataPoints& map = mapper.getMap();
-
-	// call in a thread and use a mutex to make sure that the tf is not modified while it is being published
-	publishMapTf();
-
+	
 	sensor_msgs::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<T>(map, mapFrame, timeStamp);
 	mapPublisher.publish(mapMsgOut);
-
+	
 	geometry_msgs::TransformStamped robotToSensorTf = tfBuffer.lookupTransform(sensorFrame, robotFrame, ros::Time(0), ros::Duration(3));
 	PM::TransformationParameters robotToSensor = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(robotToSensorTf);
 	PM::TransformationParameters robotToMap = sensorToMap * robotToSensor;
@@ -73,14 +82,14 @@ void retrieveParameters(const ros::NodeHandle& pn)
 int main(int argc, char** argv)
 {
 	ros::init(argc, argv, "mapper_node");
-
+	
 	ros::NodeHandle n;
 	ros::NodeHandle pn("~");
-
+	
 	retrieveParameters(pn);
-
+	
 	transformation = PM::get().REG(Transformation).create("RigidTransformation");
-
+	
 	if(is3D)
 	{
 		sub = n.subscribe("points_in", 1, gotCloud);
@@ -91,16 +100,15 @@ int main(int argc, char** argv)
 		sub = n.subscribe("points_in", 1, gotScan);
 		mapToOdom = PM::Matrix::Identity(3, 3);
 	}
-	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("points_out", 1);
+	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 1);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("odom_out", 1);
-
-	tfBroadcaster = new tf2_ros::TransformBroadcaster;
-	tfListener = new tf2_ros::TransformListener(tfBuffer);
-
+	
+	tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
+	tfListener = std::unique_ptr<tf2_ros::TransformListener>(new tf2_ros::TransformListener(tfBuffer));
+	
+	mapTfPublisherThread = std::thread(mapTfPublisherLoop);
+	
 	ros::spin();
-
-	delete tfBroadcaster;
-	delete tfListener;
-
+	
 	return 0;
 }

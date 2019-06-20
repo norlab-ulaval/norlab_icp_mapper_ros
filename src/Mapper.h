@@ -13,8 +13,10 @@ private:
 
 public:
 	Mapper();
-
+	
 	void updateMap(const PM::DataPoints& cloud);
+	
 	const PM::DataPoints& getMap();
+	
 	const PM::TransformationParameters& getOdom();
 };

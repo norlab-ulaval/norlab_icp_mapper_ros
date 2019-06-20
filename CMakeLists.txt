@@ -13,7 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf2_ros
   tf2
   libpointmatcher_ros
-)
+  )
 
 find_package(libpointmatcher CONFIG)
 
@@ -107,10 +107,10 @@ find_package(libpointmatcher CONFIG)
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-#  INCLUDE_DIRS include
-#  LIBRARIES norlab_icp_mapper
+  #  INCLUDE_DIRS include
+  #  LIBRARIES norlab_icp_mapper
   CATKIN_DEPENDS roscpp sensor_msgs tf2_ros tf2 libpointmatcher_ros
-#  DEPENDS system_lib
+  #  DEPENDS system_lib
 )
 
 ###########
@@ -153,7 +153,7 @@ add_executable(mapper_node src/mapper_node.cpp src/Mapper.cpp)
 target_link_libraries(mapper_node
   ${catkin_LIBRARIES}
   ${libpointmatcher_LIBRARIES}
-)
+  )
 
 #############
 ## Install ##

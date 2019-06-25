@@ -39,25 +39,42 @@ void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
 	ros::Time timeStamp = cloudMsgIn.header.stamp;
 	PM::DataPoints cloud = PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(cloudMsgIn);
 	
-	geometry_msgs::TransformStamped sensorToOdomTf =
-			tfBuffer.lookupTransform(odomFrame, sensorFrame, ros::Time(0), ros::Duration(3)); // change time for ros::Time::now()
-	PM::TransformationParameters sensorToOdom = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(sensorToOdomTf);
-	PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
+	PM::TransformationParameters sensorToOdom;
+	try
+	{
+		geometry_msgs::TransformStamped sensorToOdomTf = tfBuffer.lookupTransform(odomFrame, sensorFrame, timeStamp, ros::Duration(0.1));
+		sensorToOdom = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(sensorToOdomTf);
+	}
+	catch(tf2::TransformException& ex)
+	{
+		ROS_WARN("%s", ex.what());
+		return;
+	}
 	
+	PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 	mapper->updateMap(cloud, sensorToMapBeforeUpdate);
 	const PM::DataPoints& map = mapper->getMap();
-	PM::TransformationParameters sensorToMapAfterUpdate = mapper->getSensorPose();
+	const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
+	
+	sensor_msgs::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<T>(map, mapFrame, timeStamp);
+	mapPublisher.publish(mapMsgOut);
 	
 	mapTfLock.lock();
 	odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
 	mapTfLock.unlock();
 	
-	sensor_msgs::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<T>(map, mapFrame, timeStamp);
-	mapPublisher.publish(mapMsgOut);
+	PM::TransformationParameters robotToSensor;
+	try
+	{
+		geometry_msgs::TransformStamped robotToSensorTf = tfBuffer.lookupTransform(sensorFrame, robotFrame, timeStamp, ros::Duration(0.1));
+		robotToSensor = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(robotToSensorTf);
+	}
+	catch(tf2::TransformException& ex)
+	{
+		ROS_WARN("%s", ex.what());
+		return;
+	}
 	
-	geometry_msgs::TransformStamped robotToSensorTf =
-			tfBuffer.lookupTransform(sensorFrame, robotFrame, ros::Time(0), ros::Duration(3)); // change time for ros::Time::now()
-	PM::TransformationParameters robotToSensor = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(robotToSensorTf);
 	PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 	nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, mapFrame, timeStamp);
 	odomPublisher.publish(odomMsgOut);

@@ -6,17 +6,17 @@ typedef PointMatcher<T> PM;
 class Mapper
 {
 private:
-	PM::DataPoints map;
 	PM::ICP icp;
-	PM::TransformationParameters odom;
 	std::shared_ptr<PM::Transformation> transformation;
+	PM::DataPoints map;
+	PM::TransformationParameters sensorPose;
 
 public:
-	Mapper();
+	Mapper(bool is3D);
 	
-	void updateMap(const PM::DataPoints& cloud);
+	void updateMap(const PM::DataPoints& cloudInSensorFrame, const PM::TransformationParameters& estimatedSensorPose);
 	
 	const PM::DataPoints& getMap();
 	
-	const PM::TransformationParameters& getOdom();
+	const PM::TransformationParameters& getSensorPose();
 };

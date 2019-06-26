@@ -7,18 +7,24 @@
 #include <mutex>
 #include <thread>
 #include <unistd.h>
+#include <fstream>
 
-// =============== Node Parameters ===============
-std::string odomFrame;      // Name of the frame used for odometry
-std::string sensorFrame;    // Name of the frame in which the points are published
-std::string robotFrame;     // Name of the frame centered on the robot
-std::string mapFileName;    // Name of the file in which the final map is saved when is_online is false
-int mapTfPublishRate;       // Rate at which the map tf is published (in Hz)
-double maxIdleTime;         // Delay to wait being idle before shutting down ROS when is_online is false (in sec)
-bool is3D;                  // true when a 3D sensor is used, false when a 2D sensor is used
-bool isOnline;              // true when real-time mapping is wanted, false otherwise
-// ===============================================
+// ======================================================= Node Parameters =======================================================
+std::string odomFrame;               // Name of the frame used for odometry
+std::string sensorFrame;             // Name of the frame in which the points are published
+std::string robotFrame;              // Name of the frame centered on the robot
+std::string mapFileName;             // Name of the file in which the final map is saved when is_online is false
+std::string icpConfig;               // Name of the file containing the libpointmatcher icp config
+std::string inputFiltersConfig;      // Name of the file containing the filters applied to the sensor points
+std::string mapPostFiltersConfig;    // Name of the file containing the filters applied to the map after the update
+int mapTfPublishRate;                // Rate at which the map tf is published (in Hz)
+double maxIdleTime;                  // Delay to wait being idle before shutting down ROS when is_online is false (in sec)
+bool is3D;                           // true when a 3D sensor is used, false when a 2D sensor is used
+bool isOnline;                       // true when real-time mapping is wanted, false otherwise
+// ===============================================================================================================================
 
+PM::DataPointsFilters inputFilters;
+PM::DataPointsFilters mapPostFilters;
 std::shared_ptr<PM::Transformation> transformation;
 std::unique_ptr<Mapper> mapper;
 PM::TransformationParameters odomToMap;
@@ -37,10 +43,50 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<std::string>("sensor_frame", sensorFrame, "velodyne");
 	pn.param<std::string>("robot_frame", robotFrame, "base_link");
 	pn.param<std::string>("map_file_name", mapFileName, "map.vtk");
+	pn.param<std::string>("icp_config", icpConfig, "");
+	pn.param<std::string>("input_filters_config", inputFiltersConfig, "");
+	pn.param<std::string>("map_post_filters_config", mapPostFiltersConfig, "");
 	pn.param<int>("map_tf_publish_rate", mapTfPublishRate, 10);
 	pn.param<bool>("is_3D", is3D, true);
 	pn.param<bool>("is_online", isOnline, true);
 	pn.param<double>("max_idle_time", maxIdleTime, 10);
+}
+
+void loadExternalParameters()
+{
+	if(inputFiltersConfig != "")
+	{
+		std::ifstream ifs(inputFiltersConfig.c_str());
+		if(ifs.good())
+		{
+			inputFilters = PM::DataPointsFilters(ifs);
+		}
+		else
+		{
+			ROS_ERROR_STREAM("Cannot load input filters config from YAML file " << inputFiltersConfig);
+		}
+	}
+	else
+	{
+		ROS_INFO_STREAM("No input filters config file given, not using these filters");
+	}
+	
+	if(mapPostFiltersConfig != "")
+	{
+		std::ifstream ifs(mapPostFiltersConfig.c_str());
+		if(ifs.good())
+		{
+			mapPostFilters = PM::DataPointsFilters(ifs);
+		}
+		else
+		{
+			ROS_ERROR_STREAM("Cannot load map post-filters config from YAML file " << mapPostFiltersConfig);
+		}
+	}
+	else
+	{
+		ROS_INFO_STREAM("No map post-filters config file given, not using these filters");
+	}
 }
 
 void mapperShutdownLoop()
@@ -148,10 +194,11 @@ int main(int argc, char** argv)
 	ros::NodeHandle pn("~");
 	
 	retrieveParameters(pn);
+	loadExternalParameters();
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<Mapper>(new Mapper(is3D));
+	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, is3D));
 	
 	std::thread mapperShutdownThread;
 	std::thread mapTfPublishThread;

@@ -201,8 +201,6 @@ int main(int argc, char** argv)
 	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, is3D));
 	
 	std::thread mapperShutdownThread;
-	std::thread mapTfPublishThread;
-	
 	int messageQueueSize;
 	if(isOnline)
 	{
@@ -231,7 +229,7 @@ int main(int argc, char** argv)
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 1);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 1);
 	
-	mapTfPublishThread = std::thread(mapTfPublishLoop);
+	std::thread mapTfPublishThread = std::thread(mapTfPublishLoop);
 	
 	ros::spin();
 	

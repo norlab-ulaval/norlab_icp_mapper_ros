@@ -51,7 +51,9 @@ void Mapper::updateMap(PM::DataPoints& cloudInSensorFrame, PM::TransformationPar
 		sensorPose = correction * estimatedSensorPose;
 	}
 	
-	mapPostFilters.apply(map);
+	PM::DataPoints mapInSensorFrame = transformation->compute(map, sensorPose.inverse());
+	mapPostFilters.apply(mapInSensorFrame);                                                // TODO: find efficient way to compute this...
+	map = transformation->compute(mapInSensorFrame, sensorPose);
 }
 
 const PM::DataPoints& Mapper::getMap()

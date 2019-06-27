@@ -37,23 +37,26 @@ void Mapper::updateMap(PM::DataPoints& cloudInSensorFrame, PM::TransformationPar
 {
 	inputFilters.apply(cloudInSensorFrame);
 	
-	PM::DataPoints cloudInMapFrame = transformation->compute(cloudInSensorFrame, estimatedSensorPose);
+	PM::DataPoints mapInSensorFrame = transformation->compute(map, estimatedSensorPose.inverse());
 	
-	if(map.getNbPoints() == 0)
+	if(mapInSensorFrame.getNbPoints() == 0)
 	{
-		map = cloudInMapFrame;
+		mapInSensorFrame = cloudInSensorFrame;
 		sensorPose = estimatedSensorPose;
+		map = transformation->compute(mapInSensorFrame, sensorPose);
+		
 	}
 	else
 	{
-		PM::TransformationParameters correction = icp(cloudInMapFrame, map);
-		map.concatenate(transformation->compute(cloudInMapFrame, correction));
-		sensorPose = correction * estimatedSensorPose;
+		PM::TransformationParameters correction = icp(cloudInSensorFrame, mapInSensorFrame);
+		mapInSensorFrame.concatenate(transformation->compute(cloudInSensorFrame, correction));
+		
+		mapPostFilters.apply(mapInSensorFrame);
+		map = transformation->compute(mapInSensorFrame, estimatedSensorPose);
+		sensorPose =  estimatedSensorPose;
+		
 	}
 	
-	PM::DataPoints mapInSensorFrame = transformation->compute(map, sensorPose.inverse());
-	mapPostFilters.apply(mapInSensorFrame);                                                // TODO: find efficient way to compute this...
-	map = transformation->compute(mapInSensorFrame, sensorPose);
 }
 
 const PM::DataPoints& Mapper::getMap()

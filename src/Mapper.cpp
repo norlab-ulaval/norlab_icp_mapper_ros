@@ -1,10 +1,13 @@
 #include "Mapper.h"
 #include <fstream>
+#include <chrono>
 
-Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, bool is3D):
+Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, bool is3D, bool isOnline):
 		inputFilters(inputFilters),
 		mapPostFilters(mapPostFilters),
-		transformation(PM::get().TransformationRegistrar.create("RigidTransformation"))
+		transformation(PM::get().TransformationRegistrar.create("RigidTransformation")),
+		isOnline(isOnline),
+		newMapAvailable(false)
 {
 	if(icpConfigFilePath != "")
 	{
@@ -33,32 +36,89 @@ Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters
 	}
 }
 
+void Mapper::buildMap(PM::DataPoints currentCloud, PM::TransformationParameters currentSensorPose)
+{
+	mapLock.lock();
+	PM::DataPoints currentMap = map;
+	mapLock.unlock();
+	
+	currentMap.concatenate(currentCloud);
+	PM::DataPoints mapInSensorFrame = transformation->compute(currentMap, currentSensorPose.inverse());
+	mapPostFilters.apply(mapInSensorFrame);                                              // TODO: find efficient way to compute this...
+	currentMap = transformation->compute(mapInSensorFrame, currentSensorPose);
+	
+	mapLock.lock();
+	map = currentMap;
+	newMapAvailable = true;
+	mapLock.unlock();
+}
+
 void Mapper::updateMap(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose)
 {
 	inputFilters.apply(cloudInSensorFrame);
 	
-	PM::DataPoints cloudInMapFrame = transformation->compute(cloudInSensorFrame, estimatedSensorPose);
+	PM::DataPoints cloudInMapFrameBeforeCorrection = transformation->compute(cloudInSensorFrame, estimatedSensorPose);
 	
-	if(map.getNbPoints() == 0)
+	mapLock.lock();
+	PM::DataPoints currentMap = map;
+	mapLock.unlock();
+	
+	if(currentMap.getNbPoints() == 0)
 	{
-		map = cloudInMapFrame;
 		sensorPose = estimatedSensorPose;
+		
+		PM::DataPoints mapInSensorFrame = transformation->compute(cloudInMapFrameBeforeCorrection, sensorPose.inverse());
+		mapPostFilters.apply(mapInSensorFrame);
+		currentMap = transformation->compute(mapInSensorFrame, sensorPose);
+		
+		mapLock.lock();
+		map = currentMap;
+		newMapAvailable = true;
+		mapLock.unlock();
 	}
 	else
 	{
-		PM::TransformationParameters correction = icp(cloudInMapFrame, map);
-		map.concatenate(transformation->compute(cloudInMapFrame, correction));
+		PM::TransformationParameters correction = icp(cloudInMapFrameBeforeCorrection, currentMap);
+		PM::DataPoints cloudInMapFrameAfterCorrection = transformation->compute(cloudInMapFrameBeforeCorrection, correction);
 		sensorPose = correction * estimatedSensorPose;
+		
+		if(isOnline)
+		{
+			if(!mapBuilderFuture.valid() || mapBuilderFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+			{
+				mapBuilderFuture = std::async(&Mapper::buildMap, this, cloudInMapFrameAfterCorrection, sensorPose);
+			}
+		}
+		else
+		{
+			buildMap(cloudInMapFrameBeforeCorrection, sensorPose);
+		}
 	}
-	
-	PM::DataPoints mapInSensorFrame = transformation->compute(map, sensorPose.inverse());
-	mapPostFilters.apply(mapInSensorFrame);                                                // TODO: find efficient way to compute this...
-	map = transformation->compute(mapInSensorFrame, sensorPose);
 }
 
-const PM::DataPoints& Mapper::getMap()
+PM::DataPoints Mapper::getMap()
 {
-	return map;
+	mapLock.lock();
+	PM::DataPoints currentMap = map;
+	mapLock.unlock();
+	
+	return currentMap;
+}
+
+bool Mapper::getNewMap(PM::DataPoints& mapOut)
+{
+	bool mapReturned = false;
+	
+	mapLock.lock();
+	if(newMapAvailable)
+	{
+		mapOut = map;
+		newMapAvailable = false;
+		mapReturned = true;
+	}
+	mapLock.unlock();
+	
+	return mapReturned;
 }
 
 const PM::TransformationParameters& Mapper::getSensorPose()

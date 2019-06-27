@@ -9,19 +9,20 @@
 #include <unistd.h>
 #include <fstream>
 
-// ======================================================= Node Parameters =======================================================
-std::string odomFrame;               // Name of the frame used for odometry
-std::string sensorFrame;             // Name of the frame in which the points are published
-std::string robotFrame;              // Name of the frame centered on the robot
-std::string mapFileName;             // Name of the file in which the final map is saved when is_online is false
-std::string icpConfig;               // Name of the file containing the libpointmatcher icp config
-std::string inputFiltersConfig;      // Name of the file containing the filters applied to the sensor points
-std::string mapPostFiltersConfig;    // Name of the file containing the filters applied to the map after the update
-int mapTfPublishRate;                // Rate at which the map tf is published (in Hz)
-double maxIdleTime;                  // Delay to wait being idle before shutting down ROS when is_online is false (in sec)
-bool is3D;                           // true when a 3D sensor is used, false when a 2D sensor is used
-bool isOnline;                       // true when real-time mapping is wanted, false otherwise
-// ===============================================================================================================================
+// ========================================================= Node Parameters =========================================================
+std::string odomFrame;               // Name of the frame used for odometry.
+std::string sensorFrame;             // Name of the frame in which the points are published.
+std::string robotFrame;              // Name of the frame centered on the robot.
+std::string mapFileName;             // Name of the file in which the final map is saved when is_online is false.
+std::string icpConfig;               // Name of the file containing the libpointmatcher icp config.
+std::string inputFiltersConfig;      // Name of the file containing the filters applied to the sensor points.
+std::string mapPostFiltersConfig;    // Name of the file containing the filters applied to the map after the update.
+double mapPublishRate;               // Rate at which the map is published (in Hz). It can be slower depending on the map update rate.
+double mapTfPublishRate;             // Rate at which the map tf is published (in Hz).
+double maxIdleTime;                  // Delay to wait being idle before shutting down ROS when is_online is false (in sec).
+bool is3D;                           // true when a 3D sensor is used, false when a 2D sensor is used.
+bool isOnline;                       // true when real-time mapping is wanted, false otherwise.
+// ===================================================================================================================================
 
 PM::DataPointsFilters inputFilters;
 PM::DataPointsFilters mapPostFilters;
@@ -46,10 +47,11 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<std::string>("icp_config", icpConfig, "");
 	pn.param<std::string>("input_filters_config", inputFiltersConfig, "");
 	pn.param<std::string>("map_post_filters_config", mapPostFiltersConfig, "");
-	pn.param<int>("map_tf_publish_rate", mapTfPublishRate, 10);
+	pn.param<double>("map_publish_rate", mapPublishRate, 10);
+	pn.param<double>("map_tf_publish_rate", mapTfPublishRate, 10);
+	pn.param<double>("max_idle_time", maxIdleTime, 10);
 	pn.param<bool>("is_3D", is3D, true);
 	pn.param<bool>("is_online", isOnline, true);
-	pn.param<double>("max_idle_time", maxIdleTime, 10);
 }
 
 void loadExternalParameters()
@@ -133,11 +135,7 @@ void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
 	
 	PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 	mapper->updateMap(cloud, sensorToMapBeforeUpdate);
-	const PM::DataPoints& map = mapper->getMap();
 	const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
-	
-	sensor_msgs::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<T>(map, "map", timeStamp);
-	mapPublisher.publish(mapMsgOut);
 	
 	mapTfLock.lock();
 	odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
@@ -169,19 +167,35 @@ void gotScan(const sensor_msgs::LaserScan& scanMsgIn)
 	// Handle 2D scans
 }
 
-void mapTfPublishLoop()
+void mapPublisherLoop()
+{
+	ros::Rate publishRate(mapPublishRate);
+	
+	PM::DataPoints newMap;
+	while(ros::ok())
+	{
+		if(mapper->getNewMap(newMap))
+		{
+			sensor_msgs::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<T>(newMap, "map", ros::Time::now());
+			mapPublisher.publish(mapMsgOut);
+		}
+		
+		publishRate.sleep();
+	}
+}
+
+void mapTfPublisherLoop()
 {
 	ros::Rate publishRate(mapTfPublishRate);
 	
 	while(ros::ok())
 	{
 		mapTfLock.lock();
-		geometry_msgs::TransformStamped odomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<T>(odomToMap);
-		odomToMapTf.header.frame_id = "map";
-		odomToMapTf.child_frame_id = odomFrame;
-		odomToMapTf.header.stamp = ros::Time::now();
-		tfBroadcaster->sendTransform(odomToMapTf);
+		PM::TransformationParameters currentOdomToMap = odomToMap;
 		mapTfLock.unlock();
+		
+		geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<T>(currentOdomToMap, "map", odomFrame, ros::Time::now());
+		tfBroadcaster->sendTransform(currentOdomToMapTf);
 		
 		publishRate.sleep();
 	}
@@ -198,7 +212,7 @@ int main(int argc, char** argv)
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, is3D));
+	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, is3D, isOnline));
 	
 	std::thread mapperShutdownThread;
 	int messageQueueSize;
@@ -229,7 +243,8 @@ int main(int argc, char** argv)
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 1);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 1);
 	
-	std::thread mapTfPublishThread = std::thread(mapTfPublishLoop);
+	std::thread mapPublisherThread = std::thread(mapPublisherLoop);
+	std::thread mapTfPublisherThread = std::thread(mapTfPublisherLoop);
 	
 	ros::spin();
 	

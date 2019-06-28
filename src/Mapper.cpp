@@ -42,8 +42,45 @@ Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters
 	}
 }
 
+void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose, std::time_t timeStamp)
+{
+	inputFilters.apply(cloudInSensorFrame);
+	
+	PM::DataPoints cloudInMapFrameBeforeCorrection = transformation->compute(cloudInSensorFrame, estimatedSensorPose);
+	
+	mapLock.lock();
+	PM::DataPoints currentMap = map;
+	mapLock.unlock();
+	
+	if(currentMap.getNbPoints() == 0)
+	{
+		sensorPose = estimatedSensorPose;
+		
+		updateMap(cloudInMapFrameBeforeCorrection, timeStamp);
+	}
+	else
+	{
+		PM::TransformationParameters correction = icp(cloudInMapFrameBeforeCorrection, currentMap);
+		sensorPose = correction * estimatedSensorPose;
+		
+		if(shouldMapBeUpdated(timeStamp, sensorPose, icp.errorMinimizer->getOverlap()))
+		{
+			updateMap(transformation->compute(cloudInMapFrameBeforeCorrection, correction), timeStamp);
+		}
+	}
+}
+
 bool Mapper::shouldMapBeUpdated(std::time_t currentTime, PM::TransformationParameters currentSensorPose, double currentOverlap)
 {
+	if(isOnline)
+	{
+		// if previous map is not done building
+		if(mapBuilderFuture.valid() && mapBuilderFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
+		{
+			return false;
+		}
+	}
+	
 	if(mapUpdateCondition == "overlap")
 	{
 		return currentOverlap < minOverlap;
@@ -65,13 +102,36 @@ bool Mapper::shouldMapBeUpdated(std::time_t currentTime, PM::TransformationParam
 	}
 }
 
-void Mapper::buildMap(PM::DataPoints currentCloud, PM::TransformationParameters currentSensorPose)
+void Mapper::updateMap(PM::DataPoints currentCloud, std::time_t timeStamp)
 {
 	mapLock.lock();
 	PM::DataPoints currentMap = map;
 	mapLock.unlock();
 	
-	currentMap.concatenate(currentCloud);
+	lastTimeMapWasUpdated = timeStamp;
+	lastSensorPoseWhereMapWasUpdated = sensorPose;
+	
+	if(isOnline && currentMap.getNbPoints() != 0)
+	{
+		mapBuilderFuture = std::async(&Mapper::buildMap, this, currentCloud, currentMap, sensorPose);
+	}
+	else
+	{
+		buildMap(currentCloud, currentMap, sensorPose);
+	}
+}
+
+void Mapper::buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM::TransformationParameters currentSensorPose)
+{
+	if(currentMap.getNbPoints() == 0)
+	{
+		currentMap = currentCloud;
+	}
+	else
+	{
+		currentMap.concatenate(currentCloud);
+	}
+	
 	PM::DataPoints mapInSensorFrame = transformation->compute(currentMap, currentSensorPose.inverse());
 	mapPostFilters.apply(mapInSensorFrame);                                              // TODO: find efficient way to compute this...
 	currentMap = transformation->compute(mapInSensorFrame, currentSensorPose);
@@ -80,58 +140,6 @@ void Mapper::buildMap(PM::DataPoints currentCloud, PM::TransformationParameters 
 	map = currentMap;
 	newMapAvailable = true;
 	mapLock.unlock();
-}
-
-void Mapper::updateMap(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose, std::time_t timeStamp)
-{
-	inputFilters.apply(cloudInSensorFrame);
-	
-	PM::DataPoints cloudInMapFrameBeforeCorrection = transformation->compute(cloudInSensorFrame, estimatedSensorPose);
-	
-	mapLock.lock();
-	PM::DataPoints currentMap = map;
-	mapLock.unlock();
-	
-	if(currentMap.getNbPoints() == 0)
-	{
-		sensorPose = estimatedSensorPose;
-		
-		lastTimeMapWasUpdated = timeStamp;
-		lastSensorPoseWhereMapWasUpdated = sensorPose;
-		
-		PM::DataPoints mapInSensorFrame = transformation->compute(cloudInMapFrameBeforeCorrection, sensorPose.inverse());
-		mapPostFilters.apply(mapInSensorFrame);
-		currentMap = transformation->compute(mapInSensorFrame, sensorPose);
-		
-		mapLock.lock();
-		map = currentMap;
-		newMapAvailable = true;
-		mapLock.unlock();
-	}
-	else
-	{
-		PM::TransformationParameters correction = icp(cloudInMapFrameBeforeCorrection, currentMap);
-		PM::DataPoints cloudInMapFrameAfterCorrection = transformation->compute(cloudInMapFrameBeforeCorrection, correction);
-		sensorPose = correction * estimatedSensorPose;
-		
-		if(shouldMapBeUpdated(timeStamp, sensorPose, icp.errorMinimizer->getOverlap()))
-		{
-			lastTimeMapWasUpdated = timeStamp;
-			lastSensorPoseWhereMapWasUpdated = sensorPose;
-			
-			if(isOnline)
-			{
-				if(!mapBuilderFuture.valid() || mapBuilderFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
-				{
-					mapBuilderFuture = std::async(&Mapper::buildMap, this, cloudInMapFrameAfterCorrection, sensorPose);
-				}
-			}
-			else
-			{
-				buildMap(cloudInMapFrameBeforeCorrection, sensorPose);
-			}
-		}
-	}
 }
 
 PM::DataPoints Mapper::getMap()

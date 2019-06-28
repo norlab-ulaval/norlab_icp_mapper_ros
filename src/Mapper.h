@@ -27,13 +27,15 @@ private:
 	
 	bool shouldMapBeUpdated(std::time_t currentTime, PM::TransformationParameters currentSensorPose, double currentOverlap);
 	
-	void buildMap(PM::DataPoints currentCloud, PM::TransformationParameters currentSensorPose);
+	void updateMap(PM::DataPoints currentCloud, std::time_t timeStamp);
+	
+	void buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM::TransformationParameters currentSensorPose);
 
 public:
 	Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, std::string mapUpdateCondition,
 		   double minOverlap, double maxTime, double maxDistance, bool is3D, bool isOnline);
 	
-	void updateMap(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose, std::time_t timeStamp);
+	void processCloud(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose, std::time_t timeStamp);
 	
 	PM::DataPoints getMap();
 	

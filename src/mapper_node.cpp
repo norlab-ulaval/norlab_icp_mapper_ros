@@ -150,7 +150,7 @@ void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
 	}
 	
 	PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
-	mapper->updateMap(cloud, sensorToMapBeforeUpdate, timeStamp.toSec());
+	mapper->processCloud(cloud, sensorToMapBeforeUpdate, timeStamp.toSec());
 	const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
 	
 	mapTfLock.lock();

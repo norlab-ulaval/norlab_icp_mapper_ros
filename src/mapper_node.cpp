@@ -6,7 +6,6 @@
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <unistd.h>
 #include <fstream>
 
 std::string odomFrame;

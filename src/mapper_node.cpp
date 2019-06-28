@@ -17,9 +17,13 @@ std::string mapFileName;             // Name of the file in which the final map 
 std::string icpConfig;               // Name of the file containing the libpointmatcher icp config.
 std::string inputFiltersConfig;      // Name of the file containing the filters applied to the sensor points.
 std::string mapPostFiltersConfig;    // Name of the file containing the filters applied to the map after the update.
-double mapPublishRate;               // Rate at which the map is published (in Hz). It can be slower depending on the map update rate.
-double mapTfPublishRate;             // Rate at which the map tf is published (in Hz).
-double maxIdleTime;                  // Delay to wait being idle before shutting down ROS when is_online is false (in sec).
+std::string mapUpdateCondition;      // Condition for map update. It can either be 'overlap', 'time' or 'distance'.
+double mapPublishRate;               // Rate at which the map is published (in Hertz). It can be slower depending on the map update rate.
+double mapTfPublishRate;             // Rate at which the map tf is published (in Hertz).
+double maxIdleTime;                  // Delay to wait being idle before shutting down ROS when is_online is false (in seconds).
+double minOverlap;                   // Overlap between sensor and map points under which the map is updated.
+double maxTime;                      // Time since last map update over which the map is updated (in seconds).
+double maxDistance;                  // Euclidean distance from last map update over which the map is updated (in meters).
 bool is3D;                           // true when a 3D sensor is used, false when a 2D sensor is used.
 bool isOnline;                       // true when real-time mapping is wanted, false otherwise.
 // ===================================================================================================================================
@@ -47,9 +51,13 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<std::string>("icp_config", icpConfig, "");
 	pn.param<std::string>("input_filters_config", inputFiltersConfig, "");
 	pn.param<std::string>("map_post_filters_config", mapPostFiltersConfig, "");
+	pn.param<std::string>("map_update_condition", mapUpdateCondition, "overlap");
 	pn.param<double>("map_publish_rate", mapPublishRate, 10);
 	pn.param<double>("map_tf_publish_rate", mapTfPublishRate, 10);
 	pn.param<double>("max_idle_time", maxIdleTime, 10);
+	pn.param<double>("min_overlap", minOverlap, 0.9);
+	pn.param<double>("max_time", maxTime, 2);
+	pn.param<double>("max_distance", maxDistance, 1);
 	pn.param<bool>("is_3D", is3D, true);
 	pn.param<bool>("is_online", isOnline, true);
 }
@@ -68,10 +76,6 @@ void loadExternalParameters()
 			ROS_ERROR_STREAM("Cannot load input filters config from YAML file " << inputFiltersConfig);
 		}
 	}
-	else
-	{
-		ROS_INFO_STREAM("No input filters config file given, not using these filters");
-	}
 	
 	if(mapPostFiltersConfig != "")
 	{
@@ -84,10 +88,6 @@ void loadExternalParameters()
 		{
 			ROS_ERROR_STREAM("Cannot load map post-filters config from YAML file " << mapPostFiltersConfig);
 		}
-	}
-	else
-	{
-		ROS_INFO_STREAM("No map post-filters config file given, not using these filters");
 	}
 }
 
@@ -134,7 +134,7 @@ void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
 	}
 	
 	PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
-	mapper->updateMap(cloud, sensorToMapBeforeUpdate);
+	mapper->updateMap(cloud, sensorToMapBeforeUpdate, timeStamp.toSec());
 	const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
 	
 	mapTfLock.lock();
@@ -194,7 +194,8 @@ void mapTfPublisherLoop()
 		PM::TransformationParameters currentOdomToMap = odomToMap;
 		mapTfLock.unlock();
 		
-		geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<T>(currentOdomToMap, "map", odomFrame, ros::Time::now());
+		geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<T>(currentOdomToMap, "map", odomFrame,
+																													ros::Time::now());
 		tfBroadcaster->sendTransform(currentOdomToMapTf);
 		
 		publishRate.sleep();
@@ -212,7 +213,7 @@ int main(int argc, char** argv)
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, is3D, isOnline));
+	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, mapUpdateCondition, minOverlap, maxTime, maxDistance, is3D, isOnline));
 	
 	std::thread mapperShutdownThread;
 	int messageQueueSize;

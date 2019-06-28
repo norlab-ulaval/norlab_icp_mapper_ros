@@ -9,24 +9,22 @@
 #include <unistd.h>
 #include <fstream>
 
-// ========================================================= Node Parameters =========================================================
-std::string odomFrame;               // Name of the frame used for odometry.
-std::string sensorFrame;             // Name of the frame in which the points are published.
-std::string robotFrame;              // Name of the frame centered on the robot.
-std::string mapFileName;             // Name of the file in which the final map is saved when is_online is false.
-std::string icpConfig;               // Name of the file containing the libpointmatcher icp config.
-std::string inputFiltersConfig;      // Name of the file containing the filters applied to the sensor points.
-std::string mapPostFiltersConfig;    // Name of the file containing the filters applied to the map after the update.
-std::string mapUpdateCondition;      // Condition for map update. It can either be 'overlap', 'time' or 'distance'.
-double mapPublishRate;               // Rate at which the map is published (in Hertz). It can be slower depending on the map update rate.
-double mapTfPublishRate;             // Rate at which the map tf is published (in Hertz).
-double maxIdleTime;                  // Delay to wait being idle before shutting down ROS when is_online is false (in seconds).
-double minOverlap;                   // Overlap between sensor and map points under which the map is updated.
-double maxTime;                      // Time since last map update over which the map is updated (in seconds).
-double maxDistance;                  // Euclidean distance from last map update over which the map is updated (in meters).
-bool is3D;                           // true when a 3D sensor is used, false when a 2D sensor is used.
-bool isOnline;                       // true when real-time mapping is wanted, false otherwise.
-// ===================================================================================================================================
+std::string odomFrame;
+std::string sensorFrame;
+std::string robotFrame;
+std::string mapFileName;
+std::string icpConfig;
+std::string inputFiltersConfig;
+std::string mapPostFiltersConfig;
+std::string mapUpdateCondition;
+double mapPublishRate;
+double mapTfPublishRate;
+double maxIdleTime;
+double minOverlap;
+double maxTime;
+double maxDistance;
+bool is3D;
+bool isOnline;
 
 PM::DataPointsFilters inputFilters;
 PM::DataPointsFilters mapPostFilters;
@@ -41,6 +39,25 @@ std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
 std::time_t lastTimePointsWereProcessed;
 std::mutex idleTimeLock;
+
+// ========================================================= Node Parameters =========================================================
+// odom_frame: Name of the frame used for odometry.
+// sensor_frame: Name of the frame in which the points are published.
+// robot_frame: Name of the frame centered on the robot.
+// map_file_name: Name of the file in which the final map is saved when is_online is false.
+// icp_config: Name of the file containing the libpointmatcher icp config.
+// input_filters_config: Name of the file containing the filters applied to the sensor points.
+// map_post_filters_config: Name of the file containing the filters applied to the map after the update.
+// map_update_condition: Condition for map update. It can either be 'overlap', 'time' or 'distance'.
+// map_publish_rate: Rate at which the map is published (in Hertz). It can be slower depending on the map update rate.
+// map_tf_publish_rate: Rate at which the map tf is published (in Hertz).
+// max_idle_time: Delay to wait being idle before shutting down ROS when is_online is false (in seconds).
+// min_overlap: Overlap between sensor and map points under which the map is updated.
+// max_time: Time since last map update over which the map is updated (in seconds).
+// max_distance: Euclidean distance from last map update over which the map is updated (in meters).
+// is_3D: true when a 3D sensor is used, false when a 2D sensor is used.
+// is_online: true when online mapping is wanted, false otherwise.
+// ===================================================================================================================================
 
 void retrieveParameters(const ros::NodeHandle& pn)
 {

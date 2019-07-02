@@ -32,14 +32,8 @@ Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters
 		icp.setDefault();
 	}
 	
-	if(is3D)
-	{
-		sensorPose = PM::Matrix::Identity(4, 4);
-	}
-	else
-	{
-		sensorPose = PM::Matrix::Identity(3, 3);
-	}
+	int nbRows = is3D ? 4 : 3;
+	sensorPose = PM::Matrix::Identity(nbRows, nbRows);
 }
 
 void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose, std::time_t timeStamp)

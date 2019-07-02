@@ -16,6 +16,7 @@ std::string icpConfig;
 std::string inputFiltersConfig;
 std::string mapPostFiltersConfig;
 std::string mapUpdateCondition;
+double minDistNewPoint;
 double mapPublishRate;
 double mapTfPublishRate;
 double maxIdleTime;
@@ -48,6 +49,7 @@ std::mutex idleTimeLock;
 // input_filters_config: Name of the file containing the filters applied to the sensor points.
 // map_post_filters_config: Name of the file containing the filters applied to the map after the update.
 // map_update_condition: Condition for map update. It can either be 'overlap', 'time' or 'distance'.
+// min_dist_new_point: Distance from current map points under which a new point is not added to the map.
 // map_publish_rate: Rate at which the map is published (in Hertz). It can be slower depending on the map update rate.
 // map_tf_publish_rate: Rate at which the map tf is published (in Hertz).
 // max_idle_time: Delay to wait being idle before shutting down ROS when is_online is false (in seconds).
@@ -68,6 +70,7 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<std::string>("input_filters_config", inputFiltersConfig, "");
 	pn.param<std::string>("map_post_filters_config", mapPostFiltersConfig, "");
 	pn.param<std::string>("map_update_condition", mapUpdateCondition, "overlap");
+	pn.param<double>("min_dist_new_point", minDistNewPoint, 0.01);
 	pn.param<double>("map_publish_rate", mapPublishRate, 10);
 	pn.param<double>("map_tf_publish_rate", mapTfPublishRate, 10);
 	pn.param<double>("max_idle_time", maxIdleTime, 10);
@@ -229,7 +232,7 @@ int main(int argc, char** argv)
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, mapUpdateCondition, minOverlap, maxTime, maxDistance, is3D, isOnline));
+	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, minDistNewPoint, mapUpdateCondition, minOverlap, maxTime, maxDistance, is3D, isOnline));
 	
 	std::thread mapperShutdownThread;
 	int messageQueueSize;

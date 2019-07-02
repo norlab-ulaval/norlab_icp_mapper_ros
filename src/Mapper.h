@@ -15,6 +15,7 @@ private:
 	std::shared_ptr<PM::Transformation> transformation;
 	std::time_t lastTimeMapWasUpdated;
 	PM::TransformationParameters lastSensorPoseWhereMapWasUpdated;
+	double minDistNewPoint;
 	std::string mapUpdateCondition;
 	double minOverlap;
 	double maxTime;
@@ -25,15 +26,17 @@ private:
 	std::mutex mapLock;
 	std::future<void> mapBuilderFuture;
 	
-	bool shouldMapBeUpdated(std::time_t currentTime, PM::TransformationParameters currentSensorPose, double currentOverlap);
+	bool shouldMapBeUpdated(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const double& currentOverlap);
 	
-	void updateMap(PM::DataPoints currentCloud, std::time_t timeStamp);
+	void updateMap(const PM::DataPoints& currentCloud, const std::time_t& timeStamp);
 	
 	void buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM::TransformationParameters currentSensorPose);
+	
+	PM::DataPoints retrievePointsFurtherThanMinDistNewPoint(const PM::DataPoints& currentCloud, const PM::DataPoints& currentMap);
 
 public:
-	Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, std::string mapUpdateCondition,
-		   double minOverlap, double maxTime, double maxDistance, bool is3D, bool isOnline);
+	Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, double minDistNewPoint,
+		   std::string mapUpdateCondition, double minOverlap, double maxTime, double maxDistance, bool is3D, bool isOnline);
 	
 	void processCloud(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose, std::time_t timeStamp);
 	

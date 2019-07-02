@@ -1,12 +1,14 @@
 #include "Mapper.h"
+#include <nabo/nabo.h>
 #include <fstream>
 #include <chrono>
 
-Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, std::string mapUpdateCondition,
-			   double minOverlap, double maxTime, double maxDistance, bool is3D, bool isOnline):
+Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, double minDistNewPoint,
+			   std::string mapUpdateCondition, double minOverlap, double maxTime, double maxDistance, bool is3D, bool isOnline):
 		inputFilters(inputFilters),
 		mapPostFilters(mapPostFilters),
 		transformation(PM::get().TransformationRegistrar.create("RigidTransformation")),
+		minDistNewPoint(minDistNewPoint),
 		mapUpdateCondition(mapUpdateCondition),
 		minOverlap(minOverlap),
 		maxTime(maxTime),
@@ -64,7 +66,7 @@ void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, PM::Transformation
 	}
 }
 
-bool Mapper::shouldMapBeUpdated(std::time_t currentTime, PM::TransformationParameters currentSensorPose, double currentOverlap)
+bool Mapper::shouldMapBeUpdated(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const double& currentOverlap)
 {
 	if(isOnline)
 	{
@@ -96,7 +98,7 @@ bool Mapper::shouldMapBeUpdated(std::time_t currentTime, PM::TransformationParam
 	}
 }
 
-void Mapper::updateMap(PM::DataPoints currentCloud, std::time_t timeStamp)
+void Mapper::updateMap(const PM::DataPoints& currentCloud, const std::time_t& timeStamp)
 {
 	mapLock.lock();
 	PM::DataPoints currentMap = map;
@@ -123,7 +125,8 @@ void Mapper::buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM
 	}
 	else
 	{
-		currentMap.concatenate(currentCloud);
+		PM::DataPoints cloudPointsToKeep = retrievePointsFurtherThanMinDistNewPoint(currentCloud, currentMap);
+		currentMap.concatenate(cloudPointsToKeep);
 	}
 	
 	PM::DataPoints mapInSensorFrame = transformation->compute(currentMap, currentSensorPose.inverse());
@@ -134,6 +137,31 @@ void Mapper::buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM
 	map = currentMap;
 	newMapAvailable = true;
 	mapLock.unlock();
+}
+
+PM::DataPoints Mapper::retrievePointsFurtherThanMinDistNewPoint(const PM::DataPoints& currentCloud, const PM::DataPoints& currentMap)
+{
+	typedef Nabo::NearestNeighbourSearch<T> NNS;
+	
+	PM::Matches matches(PM::Matches::Dists(1, currentCloud.getNbPoints()), PM::Matches::Ids(1, currentCloud.getNbPoints()));
+	std::shared_ptr<NNS> nns = std::shared_ptr<NNS>(NNS::create(currentMap.features, currentMap.features.rows() - 1,
+																NNS::KDTREE_LINEAR_HEAP, NNS::TOUCH_STATISTICS));
+	
+	nns->knn(currentCloud.features, matches.ids, matches.dists, 1, 0);
+	
+	int goodPointCount = 0;
+	PM::DataPoints goodPoints(currentCloud.createSimilarEmpty());
+	for(int i = 0; i < currentCloud.getNbPoints(); ++i)
+	{
+		if(matches.dists(i) >= std::pow(minDistNewPoint, 2))
+		{
+			goodPoints.setColFrom(goodPointCount, currentCloud, i);
+			goodPointCount++;
+		}
+	}
+	goodPoints.conservativeResize(goodPointCount);
+	
+	return goodPoints;
 }
 
 PM::DataPoints Mapper::getMap()

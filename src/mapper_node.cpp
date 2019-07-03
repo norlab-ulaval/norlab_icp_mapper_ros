@@ -264,8 +264,8 @@ int main(int argc, char** argv)
 		sub = n.subscribe("points_in", messageQueueSize, gotScan);
 		odomToMap = PM::Matrix::Identity(3, 3);
 	}
-	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 1);
-	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 1);
+	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
+	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
 	
 	std::thread mapPublisherThread = std::thread(mapPublisherLoop);
 	std::thread mapTfPublisherThread = std::thread(mapTfPublisherLoop);

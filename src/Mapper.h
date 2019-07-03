@@ -27,7 +27,7 @@ private:
 	std::mutex mapLock;
 	std::future<void> mapBuilderFuture;
 	
-	bool shouldMapBeUpdated(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const double& currentOverlap);
+	bool shouldUpdateMap(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const double& currentOverlap);
 	
 	void updateMap(const PM::DataPoints& currentCloud, const std::time_t& timeStamp);
 	

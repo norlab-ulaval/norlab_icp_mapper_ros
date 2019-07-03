@@ -70,14 +70,14 @@ void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, PM::Transformation
 		PM::TransformationParameters correction = icp(cloudInMapFrameBeforeCorrection, cutMap);
 		sensorPose = correction * estimatedSensorPose;
 		
-		if(shouldMapBeUpdated(timeStamp, sensorPose, icp.errorMinimizer->getOverlap()))
+		if(shouldUpdateMap(timeStamp, sensorPose, icp.errorMinimizer->getOverlap()))
 		{
 			updateMap(transformation->compute(cloudInMapFrameBeforeCorrection, correction), timeStamp);
 		}
 	}
 }
 
-bool Mapper::shouldMapBeUpdated(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const double& currentOverlap)
+bool Mapper::shouldUpdateMap(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const double& currentOverlap)
 {
 	if(isOnline)
 	{

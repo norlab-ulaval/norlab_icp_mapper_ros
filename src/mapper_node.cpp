@@ -23,6 +23,7 @@ double minDistNewPoint;
 double mapPublishRate;
 double mapTfPublishRate;
 double maxIdleTime;
+double sensorMaxRange;
 bool is3D;
 bool isOnline;
 
@@ -56,6 +57,7 @@ std::mutex idleTimeLock;
 // map_publish_rate: Rate at which the map is published (in Hertz). It can be slower depending on the map update rate.
 // map_tf_publish_rate: Rate at which the map tf is published (in Hertz).
 // max_idle_time: Delay to wait being idle before shutting down ROS when is_online is false (in seconds).
+// sensor_max_range: Maximum reading distance of the laser. Used to cut the global map before matching.
 // is_3D: true when a 3D sensor is used, false when a 2D sensor is used.
 // is_online: true when online mapping is wanted, false otherwise.
 // ===================================================================================================================================
@@ -77,6 +79,7 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<double>("map_publish_rate", mapPublishRate, 10);
 	pn.param<double>("map_tf_publish_rate", mapTfPublishRate, 10);
 	pn.param<double>("max_idle_time", maxIdleTime, 10);
+	pn.param<double>("sensor_max_range", sensorMaxRange, 80);
 	pn.param<bool>("is_3D", is3D, true);
 	pn.param<bool>("is_online", isOnline, true);
 }
@@ -232,7 +235,8 @@ int main(int argc, char** argv)
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, minDistNewPoint, mapUpdateCondition, mapUpdateOverlap, mapUpdateDelay, mapUpdateDistance, is3D, isOnline));
+	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, minDistNewPoint, mapUpdateCondition, mapUpdateOverlap, mapUpdateDelay,
+												mapUpdateDistance, sensorMaxRange, is3D, isOnline));
 	
 	std::thread mapperShutdownThread;
 	int messageQueueSize;

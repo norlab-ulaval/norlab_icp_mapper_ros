@@ -4,7 +4,8 @@
 #include <chrono>
 
 Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, double minDistNewPoint,
-			   std::string mapUpdateCondition, double mapUpdateOverlap, double mapUpdateDelay, double mapUpdateDistance, bool is3D, bool isOnline):
+			   std::string mapUpdateCondition, double mapUpdateOverlap, double mapUpdateDelay, double mapUpdateDistance, double sensorMaxRange,
+			   bool is3D, bool isOnline):
 		inputFilters(inputFilters),
 		mapPostFilters(mapPostFilters),
 		transformation(PM::get().TransformationRegistrar.create("RigidTransformation")),
@@ -34,6 +35,12 @@ Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters
 		icp.setDefault();
 	}
 	
+	PM::Parameters radiusFilterParams;
+	radiusFilterParams["dim"] = "-1";
+	radiusFilterParams["dist"] = std::to_string(sensorMaxRange);
+	radiusFilterParams["removeInside"] = "0";
+	radiusFilter = PM::get().DataPointsFilterRegistrar.create("DistanceLimitDataPointsFilter", radiusFilterParams);
+	
 	int nbRows = is3D ? 4 : 3;
 	sensorPose = PM::Matrix::Identity(nbRows, nbRows);
 }
@@ -56,7 +63,11 @@ void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, PM::Transformation
 	}
 	else
 	{
-		PM::TransformationParameters correction = icp(cloudInMapFrameBeforeCorrection, currentMap);
+		PM::DataPoints mapInSensorFrame = transformation->compute(currentMap, estimatedSensorPose.inverse());
+		radiusFilter->inPlaceFilter(mapInSensorFrame);                                              // TODO: find efficient way to compute this...
+		PM::DataPoints cutMap = transformation->compute(mapInSensorFrame, estimatedSensorPose);
+		
+		PM::TransformationParameters correction = icp(cloudInMapFrameBeforeCorrection, cutMap);
 		sensorPose = correction * estimatedSensorPose;
 		
 		if(shouldMapBeUpdated(timeStamp, sensorPose, icp.errorMinimizer->getOverlap()))

@@ -17,9 +17,9 @@ private:
 	PM::TransformationParameters lastSensorPoseWhereMapWasUpdated;
 	double minDistNewPoint;
 	std::string mapUpdateCondition;
-	double minOverlap;
-	double maxTime;
-	double maxDistance;
+	double mapUpdateOverlap;
+	double mapUpdateDelay;
+	double mapUpdateDistance;
 	bool is3D;
 	bool isOnline;
 	bool newMapAvailable;
@@ -36,7 +36,7 @@ private:
 
 public:
 	Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, double minDistNewPoint,
-		   std::string mapUpdateCondition, double minOverlap, double maxTime, double maxDistance, bool is3D, bool isOnline);
+		   std::string mapUpdateCondition, double mapUpdateOverlap, double mapUpdateDelay, double mapUpdateDistance, bool is3D, bool isOnline);
 	
 	void processCloud(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose, std::time_t timeStamp);
 	

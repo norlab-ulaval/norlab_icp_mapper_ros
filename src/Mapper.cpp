@@ -4,15 +4,15 @@
 #include <chrono>
 
 Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, double minDistNewPoint,
-			   std::string mapUpdateCondition, double minOverlap, double maxTime, double maxDistance, bool is3D, bool isOnline):
+			   std::string mapUpdateCondition, double mapUpdateOverlap, double mapUpdateDelay, double mapUpdateDistance, bool is3D, bool isOnline):
 		inputFilters(inputFilters),
 		mapPostFilters(mapPostFilters),
 		transformation(PM::get().TransformationRegistrar.create("RigidTransformation")),
 		minDistNewPoint(minDistNewPoint),
 		mapUpdateCondition(mapUpdateCondition),
-		minOverlap(minOverlap),
-		maxTime(maxTime),
-		maxDistance(maxDistance),
+		mapUpdateOverlap(mapUpdateOverlap),
+		mapUpdateDelay(mapUpdateDelay),
+		mapUpdateDistance(mapUpdateDistance),
 		is3D(is3D),
 		isOnline(isOnline),
 		newMapAvailable(false)
@@ -79,18 +79,18 @@ bool Mapper::shouldMapBeUpdated(const std::time_t& currentTime, const PM::Transf
 	
 	if(mapUpdateCondition == "overlap")
 	{
-		return currentOverlap < minOverlap;
+		return currentOverlap < mapUpdateOverlap;
 	}
-	else if(mapUpdateCondition == "time")
+	else if(mapUpdateCondition == "delay")
 	{
-		return std::difftime(currentTime, lastTimeMapWasUpdated) > maxTime;
+		return std::difftime(currentTime, lastTimeMapWasUpdated) > mapUpdateDelay;
 	}
 	else if(mapUpdateCondition == "distance")
 	{
 		int nbRows = is3D ? 3 : 2;
 		PM::Vector lastSensorLocation = lastSensorPoseWhereMapWasUpdated.topRightCorner(nbRows, 1);
 		PM::Vector currentSensorLocation = currentSensorPose.topRightCorner(nbRows, 1);
-		return std::abs((currentSensorLocation - lastSensorLocation).norm()) > maxDistance;
+		return std::abs((currentSensorLocation - lastSensorLocation).norm()) > mapUpdateDistance;
 	}
 	else
 	{

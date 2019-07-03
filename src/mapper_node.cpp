@@ -16,13 +16,13 @@ std::string icpConfig;
 std::string inputFiltersConfig;
 std::string mapPostFiltersConfig;
 std::string mapUpdateCondition;
+double mapUpdateOverlap;
+double mapUpdateDelay;
+double mapUpdateDistance;
 double minDistNewPoint;
 double mapPublishRate;
 double mapTfPublishRate;
 double maxIdleTime;
-double minOverlap;
-double maxTime;
-double maxDistance;
 bool is3D;
 bool isOnline;
 
@@ -48,14 +48,14 @@ std::mutex idleTimeLock;
 // icp_config: Name of the file containing the libpointmatcher icp config.
 // input_filters_config: Name of the file containing the filters applied to the sensor points.
 // map_post_filters_config: Name of the file containing the filters applied to the map after the update.
-// map_update_condition: Condition for map update. It can either be 'overlap', 'time' or 'distance'.
+// map_update_condition: Condition for map update. It can either be 'overlap', 'delay' or 'distance'.
+// map_update_overlap: Overlap between sensor and map points under which the map is updated.
+// map_update_delay: Delay since last map update over which the map is updated (in seconds).
+// map_update_distance: Euclidean distance from last map update over which the map is updated (in meters).
 // min_dist_new_point: Distance from current map points under which a new point is not added to the map.
 // map_publish_rate: Rate at which the map is published (in Hertz). It can be slower depending on the map update rate.
 // map_tf_publish_rate: Rate at which the map tf is published (in Hertz).
 // max_idle_time: Delay to wait being idle before shutting down ROS when is_online is false (in seconds).
-// min_overlap: Overlap between sensor and map points under which the map is updated.
-// max_time: Time since last map update over which the map is updated (in seconds).
-// max_distance: Euclidean distance from last map update over which the map is updated (in meters).
 // is_3D: true when a 3D sensor is used, false when a 2D sensor is used.
 // is_online: true when online mapping is wanted, false otherwise.
 // ===================================================================================================================================
@@ -70,13 +70,13 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<std::string>("input_filters_config", inputFiltersConfig, "");
 	pn.param<std::string>("map_post_filters_config", mapPostFiltersConfig, "");
 	pn.param<std::string>("map_update_condition", mapUpdateCondition, "overlap");
+	pn.param<double>("map_update_overlap", mapUpdateOverlap, 0.9);
+	pn.param<double>("map_update_delay", mapUpdateDelay, 1);
+	pn.param<double>("map_update_distance", mapUpdateDistance, 0.5);
 	pn.param<double>("min_dist_new_point", minDistNewPoint, 0.01);
 	pn.param<double>("map_publish_rate", mapPublishRate, 10);
 	pn.param<double>("map_tf_publish_rate", mapTfPublishRate, 10);
 	pn.param<double>("max_idle_time", maxIdleTime, 10);
-	pn.param<double>("min_overlap", minOverlap, 0.9);
-	pn.param<double>("max_time", maxTime, 2);
-	pn.param<double>("max_distance", maxDistance, 1);
 	pn.param<bool>("is_3D", is3D, true);
 	pn.param<bool>("is_online", isOnline, true);
 }
@@ -232,7 +232,7 @@ int main(int argc, char** argv)
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, minDistNewPoint, mapUpdateCondition, minOverlap, maxTime, maxDistance, is3D, isOnline));
+	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, minDistNewPoint, mapUpdateCondition, mapUpdateOverlap, mapUpdateDelay, mapUpdateDistance, is3D, isOnline));
 	
 	std::thread mapperShutdownThread;
 	int messageQueueSize;

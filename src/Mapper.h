@@ -16,13 +16,22 @@ private:
 	std::shared_ptr<PM::DataPointsFilter> radiusFilter;
 	std::time_t lastTimeMapWasUpdated;
 	PM::TransformationParameters lastSensorPoseWhereMapWasUpdated;
-	double minDistNewPoint;
 	std::string mapUpdateCondition;
 	double mapUpdateOverlap;
 	double mapUpdateDelay;
 	double mapUpdateDistance;
+	double minDistNewPoint;
+	double sensorMaxRange;
+	double priorDynamic;
+	double thresholdDynamic;
+	double beamHalfAngle;
+	double epsilonA;
+	double epsilonD;
+	double alpha;
+	double beta;
 	bool is3D;
 	bool isOnline;
+	bool computeProbDynamic;
 	bool newMapAvailable;
 	std::mutex mapLock;
 	std::future<void> mapBuilderFuture;
@@ -34,11 +43,17 @@ private:
 	void buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM::TransformationParameters currentSensorPose);
 	
 	PM::DataPoints retrievePointsFurtherThanMinDistNewPoint(const PM::DataPoints& currentCloud, const PM::DataPoints& currentMap);
+	
+	void computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& currentCloud, PM::DataPoints& currentMap,
+												const PM::TransformationParameters& currentSensorPose);
+	
+	void convertToSphericalCoordinates(const PM::DataPoints& points, PM::Matrix& radii, PM::Matrix& angles);
 
 public:
-	Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, double minDistNewPoint,
-		   std::string mapUpdateCondition, double mapUpdateOverlap, double mapUpdateDelay, double mapUpdateDistance, double sensorMaxRange,
-		   bool is3D, bool isOnline);
+	Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, std::string mapUpdateCondition,
+		   double mapUpdateOverlap, double mapUpdateDelay, double mapUpdateDistance, double minDistNewPoint, double sensorMaxRange,
+		   double priorDynamic, double thresholdDynamic, double beamHalfAngle, double epsilonA, double epsilonD, double alpha, double beta,
+		   bool is3D, bool isOnline, bool computeProbDynamic);
 	
 	void processCloud(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose, std::time_t timeStamp);
 	

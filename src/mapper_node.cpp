@@ -19,13 +19,21 @@ std::string mapUpdateCondition;
 double mapUpdateOverlap;
 double mapUpdateDelay;
 double mapUpdateDistance;
-double minDistNewPoint;
 double mapPublishRate;
 double mapTfPublishRate;
 double maxIdleTime;
+double minDistNewPoint;
 double sensorMaxRange;
+double priorDynamic;
+double thresholdDynamic;
+double beamHalfAngle;
+double epsilonA;
+double epsilonD;
+double alpha;
+double beta;
 bool is3D;
 bool isOnline;
+bool computeProbDynamic;
 
 PM::DataPointsFilters inputFilters;
 PM::DataPointsFilters mapPostFilters;
@@ -53,13 +61,21 @@ std::mutex idleTimeLock;
 // map_update_overlap: Overlap between sensor and map points under which the map is updated.
 // map_update_delay: Delay since last map update over which the map is updated (in seconds).
 // map_update_distance: Euclidean distance from last map update over which the map is updated (in meters).
-// min_dist_new_point: Distance from current map points under which a new point is not added to the map.
 // map_publish_rate: Rate at which the map is published (in Hertz). It can be slower depending on the map update rate.
 // map_tf_publish_rate: Rate at which the map tf is published (in Hertz).
 // max_idle_time: Delay to wait being idle before shutting down ROS when is_online is false (in seconds).
-// sensor_max_range: Maximum reading distance of the laser. Used to cut the global map before matching.
+// min_dist_new_point: Distance from current map points under which a new point is not added to the map (in meters).
+// sensor_max_range: Maximum reading distance of the laser. Used to cut the global map before matching (in meters).
+// prior_dynamic: A priori probability of points being dynamic.
+// threshold_dynamic: Probability at which a point is considered permanently dynamic.
+// beam_half_angle: Half angle of the cones formed by the sensor laser beams (in rad).
+// epsilon_a: Error proportional to the sensor distance.
+// epsilon_d: Fix error on the sensor distance (in meters).
+// alpha: Probability of staying static given that the point was static.
+// beta: Probability of staying dynamic given that the point was dynamic.
 // is_3D: true when a 3D sensor is used, false when a 2D sensor is used.
 // is_online: true when online mapping is wanted, false otherwise.
+// compute_prob_dynamic: true when computation of probability of points being dynamic is wanted, false otherwise.
 // ===================================================================================================================================
 
 void retrieveParameters(const ros::NodeHandle& pn)
@@ -75,13 +91,21 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<double>("map_update_overlap", mapUpdateOverlap, 0.9);
 	pn.param<double>("map_update_delay", mapUpdateDelay, 1);
 	pn.param<double>("map_update_distance", mapUpdateDistance, 0.5);
-	pn.param<double>("min_dist_new_point", minDistNewPoint, 0.01);
 	pn.param<double>("map_publish_rate", mapPublishRate, 10);
 	pn.param<double>("map_tf_publish_rate", mapTfPublishRate, 10);
 	pn.param<double>("max_idle_time", maxIdleTime, 10);
+	pn.param<double>("min_dist_new_point", minDistNewPoint, 0.01);
 	pn.param<double>("sensor_max_range", sensorMaxRange, 80);
+	pn.param<double>("prior_dynamic", priorDynamic, 0.6);
+	pn.param<double>("threshold_dynamic", thresholdDynamic, 0.9);
+	pn.param<double>("beam_half_angle", beamHalfAngle, 0.01);
+	pn.param<double>("epsilon_a", epsilonA, 0.01);
+	pn.param<double>("epsilon_d", epsilonD, 0.01);
+	pn.param<double>("alpha", alpha, 0.8);
+	pn.param<double>("beta", beta, 0.99);
 	pn.param<bool>("is_3D", is3D, true);
 	pn.param<bool>("is_online", isOnline, true);
+	pn.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
 }
 
 void loadExternalParameters()
@@ -235,8 +259,9 @@ int main(int argc, char** argv)
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, minDistNewPoint, mapUpdateCondition, mapUpdateOverlap, mapUpdateDelay,
-												mapUpdateDistance, sensorMaxRange, is3D, isOnline));
+	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, mapUpdateCondition, mapUpdateOverlap, mapUpdateDelay,
+												mapUpdateDistance, minDistNewPoint, sensorMaxRange, priorDynamic, thresholdDynamic, beamHalfAngle, epsilonA,
+												epsilonD, alpha, beta, is3D, isOnline, computeProbDynamic));
 	
 	std::thread mapperShutdownThread;
 	int messageQueueSize;

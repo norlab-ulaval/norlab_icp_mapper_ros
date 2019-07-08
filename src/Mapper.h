@@ -17,18 +17,18 @@ private:
 	std::time_t lastTimeMapWasUpdated;
 	PM::TransformationParameters lastSensorPoseWhereMapWasUpdated;
 	std::string mapUpdateCondition;
-	double mapUpdateOverlap;
-	double mapUpdateDelay;
-	double mapUpdateDistance;
-	double minDistNewPoint;
-	double sensorMaxRange;
-	double priorDynamic;
-	double thresholdDynamic;
-	double beamHalfAngle;
-	double epsilonA;
-	double epsilonD;
-	double alpha;
-	double beta;
+	float mapUpdateOverlap;
+	float mapUpdateDelay;
+	float mapUpdateDistance;
+	float minDistNewPoint;
+	float sensorMaxRange;
+	float priorDynamic;
+	float thresholdDynamic;
+	float beamHalfAngle;
+	float epsilonA;
+	float epsilonD;
+	float alpha;
+	float beta;
 	bool is3D;
 	bool isOnline;
 	bool computeProbDynamic;
@@ -36,7 +36,7 @@ private:
 	std::mutex mapLock;
 	std::future<void> mapBuilderFuture;
 	
-	bool shouldUpdateMap(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const double& currentOverlap);
+	bool shouldUpdateMap(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const float& currentOverlap);
 	
 	void updateMap(const PM::DataPoints& currentCloud, const std::time_t& timeStamp);
 	
@@ -51,8 +51,8 @@ private:
 
 public:
 	Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, std::string mapUpdateCondition,
-		   double mapUpdateOverlap, double mapUpdateDelay, double mapUpdateDistance, double minDistNewPoint, double sensorMaxRange,
-		   double priorDynamic, double thresholdDynamic, double beamHalfAngle, double epsilonA, double epsilonD, double alpha, double beta,
+		   float mapUpdateOverlap, float mapUpdateDelay, float mapUpdateDistance, float minDistNewPoint, float sensorMaxRange,
+		   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
 		   bool is3D, bool isOnline, bool computeProbDynamic);
 	
 	void processCloud(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose, std::time_t timeStamp);

@@ -16,21 +16,21 @@ std::string icpConfig;
 std::string inputFiltersConfig;
 std::string mapPostFiltersConfig;
 std::string mapUpdateCondition;
-double mapUpdateOverlap;
-double mapUpdateDelay;
-double mapUpdateDistance;
-double mapPublishRate;
-double mapTfPublishRate;
-double maxIdleTime;
-double minDistNewPoint;
-double sensorMaxRange;
-double priorDynamic;
-double thresholdDynamic;
-double beamHalfAngle;
-double epsilonA;
-double epsilonD;
-double alpha;
-double beta;
+float mapUpdateOverlap;
+float mapUpdateDelay;
+float mapUpdateDistance;
+float mapPublishRate;
+float mapTfPublishRate;
+float maxIdleTime;
+float minDistNewPoint;
+float sensorMaxRange;
+float priorDynamic;
+float thresholdDynamic;
+float beamHalfAngle;
+float epsilonA;
+float epsilonD;
+float alpha;
+float beta;
 bool is3D;
 bool isOnline;
 bool computeProbDynamic;
@@ -88,21 +88,21 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<std::string>("input_filters_config", inputFiltersConfig, "");
 	pn.param<std::string>("map_post_filters_config", mapPostFiltersConfig, "");
 	pn.param<std::string>("map_update_condition", mapUpdateCondition, "overlap");
-	pn.param<double>("map_update_overlap", mapUpdateOverlap, 0.9);
-	pn.param<double>("map_update_delay", mapUpdateDelay, 1);
-	pn.param<double>("map_update_distance", mapUpdateDistance, 0.5);
-	pn.param<double>("map_publish_rate", mapPublishRate, 10);
-	pn.param<double>("map_tf_publish_rate", mapTfPublishRate, 10);
-	pn.param<double>("max_idle_time", maxIdleTime, 10);
-	pn.param<double>("min_dist_new_point", minDistNewPoint, 0.01);
-	pn.param<double>("sensor_max_range", sensorMaxRange, 80);
-	pn.param<double>("prior_dynamic", priorDynamic, 0.6);
-	pn.param<double>("threshold_dynamic", thresholdDynamic, 0.9);
-	pn.param<double>("beam_half_angle", beamHalfAngle, 0.01);
-	pn.param<double>("epsilon_a", epsilonA, 0.01);
-	pn.param<double>("epsilon_d", epsilonD, 0.01);
-	pn.param<double>("alpha", alpha, 0.8);
-	pn.param<double>("beta", beta, 0.99);
+	pn.param<float>("map_update_overlap", mapUpdateOverlap, 0.9);
+	pn.param<float>("map_update_delay", mapUpdateDelay, 1);
+	pn.param<float>("map_update_distance", mapUpdateDistance, 0.5);
+	pn.param<float>("map_publish_rate", mapPublishRate, 10);
+	pn.param<float>("map_tf_publish_rate", mapTfPublishRate, 10);
+	pn.param<float>("max_idle_time", maxIdleTime, 10);
+	pn.param<float>("min_dist_new_point", minDistNewPoint, 0.01);
+	pn.param<float>("sensor_max_range", sensorMaxRange, 80);
+	pn.param<float>("prior_dynamic", priorDynamic, 0.6);
+	pn.param<float>("threshold_dynamic", thresholdDynamic, 0.9);
+	pn.param<float>("beam_half_angle", beamHalfAngle, 0.01);
+	pn.param<float>("epsilon_a", epsilonA, 0.01);
+	pn.param<float>("epsilon_d", epsilonD, 0.01);
+	pn.param<float>("alpha", alpha, 0.8);
+	pn.param<float>("beta", beta, 0.99);
 	pn.param<bool>("is_3D", is3D, true);
 	pn.param<bool>("is_online", isOnline, true);
 	pn.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
@@ -110,7 +110,7 @@ void retrieveParameters(const ros::NodeHandle& pn)
 
 void loadExternalParameters()
 {
-	if(inputFiltersConfig != "")
+	if(!inputFiltersConfig.empty())
 	{
 		std::ifstream ifs(inputFiltersConfig.c_str());
 		if(ifs.good())
@@ -123,7 +123,7 @@ void loadExternalParameters()
 		}
 	}
 	
-	if(mapPostFiltersConfig != "")
+	if(!mapPostFiltersConfig.empty())
 	{
 		std::ifstream ifs(mapPostFiltersConfig.c_str());
 		if(ifs.good())

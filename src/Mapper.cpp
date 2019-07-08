@@ -4,8 +4,8 @@
 #include <chrono>
 
 Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, std::string mapUpdateCondition,
-			   double mapUpdateOverlap, double mapUpdateDelay, double mapUpdateDistance, double minDistNewPoint, double sensorMaxRange,
-			   double priorDynamic, double thresholdDynamic, double beamHalfAngle, double epsilonA, double epsilonD, double alpha, double beta,
+			   float mapUpdateOverlap, float mapUpdateDelay, float mapUpdateDistance, float minDistNewPoint, float sensorMaxRange,
+			   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
 			   bool is3D, bool isOnline, bool computeProbDynamic):
 		inputFilters(inputFilters),
 		mapPostFilters(mapPostFilters),
@@ -87,7 +87,7 @@ void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, PM::Transformation
 	}
 }
 
-bool Mapper::shouldUpdateMap(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const double& currentOverlap)
+bool Mapper::shouldUpdateMap(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const float& currentOverlap)
 {
 	if(isOnline)
 	{
@@ -206,7 +206,7 @@ void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& curren
 {
 	typedef Nabo::NearestNeighbourSearch<T> NNS;
 	const int nbRows = is3D ? 3 : 2;
-	const double eps = 0.0001;
+	const float eps = 0.0001;
 	
 	PM::DataPoints currentCloudInSensorFrame = transformation->compute(currentCloud, currentSensorPose.inverse());
 	
@@ -290,8 +290,8 @@ void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& curren
 				const float c1 = (1 - (w_v * w_d1));
 				const float c2 = w_v * w_d1;
 				
-				double probDynamic;
-				double probStatic;
+				float probDynamic;
+				float probStatic;
 				if(lastDyn < thresholdDynamic)
 				{
 					probDynamic = c1 * lastDyn + c2 * w_d2 * ((1 - alpha) * (1 - lastDyn) + beta * lastDyn);

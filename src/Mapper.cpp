@@ -88,7 +88,8 @@ void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, const PM::Transfor
 	}
 }
 
-bool Mapper::shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_clock>& currentTime, const PM::TransformationParameters& currentSensorPose, const float& currentOverlap)
+bool Mapper::shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_clock>& currentTime, const PM::TransformationParameters& currentSensorPose,
+							 const float& currentOverlap)
 {
 	if(isOnline)
 	{

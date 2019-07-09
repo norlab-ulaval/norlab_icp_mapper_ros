@@ -297,5 +297,12 @@ int main(int argc, char** argv)
 	
 	ros::spin();
 	
+	mapPublisherThread.join();
+	mapTfPublisherThread.join();
+	if(!isOnline)
+	{
+		mapperShutdownThread.join();
+	}
+	
 	return 0;
 }

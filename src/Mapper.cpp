@@ -6,7 +6,7 @@
 Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, std::string mapUpdateCondition,
 			   float mapUpdateOverlap, float mapUpdateDelay, float mapUpdateDistance, float minDistNewPoint, float sensorMaxRange,
 			   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
-			   bool is3D, bool isOnline, bool computeProbDynamic):
+			   bool is3D, bool isOnline, bool computeProbDynamic, bool isMapping):
 		inputFilters(inputFilters),
 		mapPostFilters(mapPostFilters),
 		transformation(PM::get().TransformationRegistrar.create("RigidTransformation")),
@@ -26,6 +26,7 @@ Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters
 		is3D(is3D),
 		isOnline(isOnline),
 		computeProbDynamic(computeProbDynamic),
+		isMapping(isMapping),
 		newMapAvailable(false)
 {
 	if(icpConfigFilePath != "")
@@ -91,6 +92,11 @@ void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, const PM::Transfor
 bool Mapper::shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_clock>& currentTime, const PM::TransformationParameters& currentSensorPose,
 							 const float& currentOverlap)
 {
+	if(!isMapping)
+	{
+		return false;
+	}
+	
 	if(isOnline)
 	{
 		// if previous map is not done building

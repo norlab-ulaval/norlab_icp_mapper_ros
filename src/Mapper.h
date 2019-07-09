@@ -32,6 +32,7 @@ private:
 	bool is3D;
 	bool isOnline;
 	bool computeProbDynamic;
+	bool isMapping;
 	bool newMapAvailable;
 	std::mutex mapLock;
 	std::future<void> mapBuilderFuture;
@@ -54,7 +55,7 @@ public:
 	Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, std::string mapUpdateCondition,
 		   float mapUpdateOverlap, float mapUpdateDelay, float mapUpdateDistance, float minDistNewPoint, float sensorMaxRange,
 		   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
-		   bool is3D, bool isOnline, bool computeProbDynamic);
+		   bool is3D, bool isOnline, bool computeProbDynamic, bool isMapping);
 	
 	void processCloud(PM::DataPoints& cloudInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
 					  const std::chrono::time_point<std::chrono::steady_clock>& timeStamp);

@@ -34,6 +34,7 @@ float beta;
 bool is3D;
 bool isOnline;
 bool computeProbDynamic;
+bool isMapping;
 
 PM::DataPointsFilters inputFilters;
 PM::DataPointsFilters mapPostFilters;
@@ -76,6 +77,7 @@ std::mutex idleTimeLock;
 // is_3D: true when a 3D sensor is used, false when a 2D sensor is used.
 // is_online: true when online mapping is wanted, false otherwise.
 // compute_prob_dynamic: true when computation of probability of points being dynamic is wanted, false otherwise.
+// is_mapping: true when map updates are wanted, false when only localization is wanted.
 // ===================================================================================================================================
 
 void retrieveParameters(const ros::NodeHandle& pn)
@@ -94,7 +96,7 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<float>("map_publish_rate", mapPublishRate, 10);
 	pn.param<float>("map_tf_publish_rate", mapTfPublishRate, 10);
 	pn.param<float>("max_idle_time", maxIdleTime, 10);
-	pn.param<float>("min_dist_new_point", minDistNewPoint, 0.01);
+	pn.param<float>("min_dist_new_point", minDistNewPoint, 0.03);
 	pn.param<float>("sensor_max_range", sensorMaxRange, 80);
 	pn.param<float>("prior_dynamic", priorDynamic, 0.6);
 	pn.param<float>("threshold_dynamic", thresholdDynamic, 0.9);
@@ -106,6 +108,7 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<bool>("is_3D", is3D, true);
 	pn.param<bool>("is_online", isOnline, true);
 	pn.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
+	pn.param<bool>("is_mapping", isMapping, true);
 }
 
 void loadExternalParameters()
@@ -261,7 +264,7 @@ int main(int argc, char** argv)
 	
 	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, mapUpdateCondition, mapUpdateOverlap, mapUpdateDelay,
 												mapUpdateDistance, minDistNewPoint, sensorMaxRange, priorDynamic, thresholdDynamic, beamHalfAngle, epsilonA,
-												epsilonD, alpha, beta, is3D, isOnline, computeProbDynamic));
+												epsilonD, alpha, beta, is3D, isOnline, computeProbDynamic, isMapping));
 	
 	std::thread mapperShutdownThread;
 	int messageQueueSize;

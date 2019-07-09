@@ -55,7 +55,8 @@ Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters
 	sensorPose = PM::Matrix::Identity(nbRows, nbRows);
 }
 
-void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose, std::time_t timeStamp)
+void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
+						  const std::chrono::time_point<std::chrono::steady_clock>& timeStamp)
 {
 	inputFilters.apply(cloudInSensorFrame);
 	
@@ -87,7 +88,7 @@ void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, PM::Transformation
 	}
 }
 
-bool Mapper::shouldUpdateMap(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const float& currentOverlap)
+bool Mapper::shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_clock>& currentTime, const PM::TransformationParameters& currentSensorPose, const float& currentOverlap)
 {
 	if(isOnline)
 	{
@@ -104,7 +105,7 @@ bool Mapper::shouldUpdateMap(const std::time_t& currentTime, const PM::Transform
 	}
 	else if(mapUpdateCondition == "delay")
 	{
-		return std::difftime(currentTime, lastTimeMapWasUpdated) > mapUpdateDelay;
+		return (currentTime - lastTimeMapWasUpdated) > std::chrono::duration<float>(mapUpdateDelay);
 	}
 	else if(mapUpdateCondition == "distance")
 	{
@@ -119,7 +120,7 @@ bool Mapper::shouldUpdateMap(const std::time_t& currentTime, const PM::Transform
 	}
 }
 
-void Mapper::updateMap(const PM::DataPoints& currentCloud, const std::time_t& timeStamp)
+void Mapper::updateMap(const PM::DataPoints& currentCloud, const std::chrono::time_point<std::chrono::steady_clock>& timeStamp)
 {
 	mapLock.lock();
 	PM::DataPoints currentMap = map;

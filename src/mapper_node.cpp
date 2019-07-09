@@ -46,7 +46,7 @@ ros::Publisher odomPublisher;
 std::unique_ptr<tf2_ros::Buffer> tfBuffer;
 std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
-std::time_t lastTimePointsWereProcessed;
+std::chrono::time_point<std::chrono::steady_clock> lastTimePointsWereProcessed;
 std::mutex idleTimeLock;
 
 // ========================================================= Node Parameters =========================================================
@@ -63,7 +63,7 @@ std::mutex idleTimeLock;
 // map_update_distance: Euclidean distance from last map update over which the map is updated (in meters).
 // map_publish_rate: Rate at which the map is published (in Hertz). It can be slower depending on the map update rate.
 // map_tf_publish_rate: Rate at which the map tf is published (in Hertz).
-// max_idle_time: Delay to wait being idle before shutting down ROS when is_online is false (in seconds).
+// max_idle_time: Delay to wait being idle before shutting down ROS when is_online is false (in seconds). The specified delay is respected up to a precision of 1/10th of a second.
 // min_dist_new_point: Distance from current map points under which a new point is not added to the map (in meters).
 // sensor_max_range: Maximum reading distance of the laser. Used to cut the global map before matching (in meters).
 // prior_dynamic: A priori probability of points being dynamic.
@@ -139,18 +139,18 @@ void loadExternalParameters()
 
 void mapperShutdownLoop()
 {
-	double idleTime = 0;
+	std::chrono::duration<float> idleTime = std::chrono::duration<float>::zero();
 	
 	while(ros::ok())
 	{
 		idleTimeLock.lock();
-		if(lastTimePointsWereProcessed)
+		if(lastTimePointsWereProcessed.time_since_epoch().count())
 		{
-			idleTime = std::difftime(std::time(nullptr), lastTimePointsWereProcessed);
+			idleTime = std::chrono::steady_clock::now() - lastTimePointsWereProcessed;
 		}
 		idleTimeLock.unlock();
 		
-		if(idleTime > maxIdleTime)
+		if(idleTime > std::chrono::duration<float>(maxIdleTime))
 		{
 			ROS_INFO("Saving map to %s", mapFileName.c_str());
 			mapper->getMap().save(mapFileName);
@@ -158,7 +158,7 @@ void mapperShutdownLoop()
 			ros::shutdown();
 		}
 		
-		sleep(1);
+		std::this_thread::sleep_for(std::chrono::duration<float>(0.1));
 	}
 }
 
@@ -180,7 +180,7 @@ void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
 	}
 	
 	PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
-	mapper->processCloud(cloud, sensorToMapBeforeUpdate, timeStamp.toSec());
+	mapper->processCloud(cloud, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
 	const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
 	
 	mapTfLock.lock();
@@ -204,7 +204,7 @@ void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
 	odomPublisher.publish(odomMsgOut);
 	
 	idleTimeLock.lock();
-	lastTimePointsWereProcessed = std::time(nullptr);
+	lastTimePointsWereProcessed = std::chrono::steady_clock::now();
 	idleTimeLock.unlock();
 }
 

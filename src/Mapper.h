@@ -14,7 +14,7 @@ private:
 	PM::TransformationParameters sensorPose;
 	std::shared_ptr<PM::Transformation> transformation;
 	std::shared_ptr<PM::DataPointsFilter> radiusFilter;
-	std::time_t lastTimeMapWasUpdated;
+	std::chrono::time_point<std::chrono::steady_clock> lastTimeMapWasUpdated;
 	PM::TransformationParameters lastSensorPoseWhereMapWasUpdated;
 	std::string mapUpdateCondition;
 	float mapUpdateOverlap;
@@ -36,9 +36,10 @@ private:
 	std::mutex mapLock;
 	std::future<void> mapBuilderFuture;
 	
-	bool shouldUpdateMap(const std::time_t& currentTime, const PM::TransformationParameters& currentSensorPose, const float& currentOverlap);
+	bool shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_clock>& currentTime, const PM::TransformationParameters& currentSensorPose,
+						 const float& currentOverlap);
 	
-	void updateMap(const PM::DataPoints& currentCloud, const std::time_t& timeStamp);
+	void updateMap(const PM::DataPoints& currentCloud, const std::chrono::time_point<std::chrono::steady_clock>& timeStamp);
 	
 	void buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM::TransformationParameters currentSensorPose);
 	
@@ -55,7 +56,8 @@ public:
 		   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
 		   bool is3D, bool isOnline, bool computeProbDynamic);
 	
-	void processCloud(PM::DataPoints& cloudInSensorFrame, PM::TransformationParameters& estimatedSensorPose, std::time_t timeStamp);
+	void processCloud(PM::DataPoints& cloudInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
+					  const std::chrono::time_point<std::chrono::steady_clock>& timeStamp);
 	
 	PM::DataPoints getMap();
 	

@@ -62,6 +62,8 @@ public:
 	
 	PM::DataPoints getMap();
 	
+	void setMap(const PM::DataPoints& newMap);
+	
 	bool getNewMap(PM::DataPoints& mapOut);
 	
 	const PM::TransformationParameters& getSensorPose();

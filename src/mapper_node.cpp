@@ -11,7 +11,9 @@
 std::string odomFrame;
 std::string sensorFrame;
 std::string robotFrame;
-std::string mapFileName;
+std::string initialMapFileName;
+std::string initialMapPose;
+std::string finalMapFileName;
 std::string icpConfig;
 std::string inputFiltersConfig;
 std::string mapPostFiltersConfig;
@@ -54,7 +56,9 @@ std::mutex idleTimeLock;
 // odom_frame: Name of the frame used for odometry.
 // sensor_frame: Name of the frame in which the points are published.
 // robot_frame: Name of the frame centered on the robot.
-// map_file_name: Name of the file in which the final map is saved when is_online is false.
+// initial_map_file_name: Name of the file from which the initial map is loaded.
+// initial_map_pose: Transformation matrix in homogeneous coordinates describing the pose of the initial map in the current map frame.
+// final_map_file_name: Name of the file in which the final map is saved when is_online is false.
 // icp_config: Name of the file containing the libpointmatcher icp config.
 // input_filters_config: Name of the file containing the filters applied to the sensor points.
 // map_post_filters_config: Name of the file containing the filters applied to the map after the update.
@@ -85,7 +89,9 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<std::string>("odom_frame", odomFrame, "odom");
 	pn.param<std::string>("sensor_frame", sensorFrame, "velodyne");
 	pn.param<std::string>("robot_frame", robotFrame, "base_link");
-	pn.param<std::string>("map_file_name", mapFileName, "map.vtk");
+	pn.param<std::string>("initial_map_file_name", initialMapFileName, "");
+	pn.param<std::string>("initial_map_pose", initialMapPose, "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]");
+	pn.param<std::string>("final_map_file_name", finalMapFileName, "map.vtk");
 	pn.param<std::string>("icp_config", icpConfig, "");
 	pn.param<std::string>("input_filters_config", inputFiltersConfig, "");
 	pn.param<std::string>("map_post_filters_config", mapPostFiltersConfig, "");
@@ -140,6 +146,54 @@ void loadExternalParameters()
 	}
 }
 
+PM::TransformationParameters parseInitialMapPose()
+{
+	int nbRows = is3D ? 4 : 3;
+	
+	PM::TransformationParameters parsedPose = PM::TransformationParameters::Identity(nbRows, nbRows);
+	
+	initialMapPose.erase(std::remove(initialMapPose.begin(), initialMapPose.end(), '['), initialMapPose.end());
+	initialMapPose.erase(std::remove(initialMapPose.begin(), initialMapPose.end(), ']'), initialMapPose.end());
+	std::replace(initialMapPose.begin(), initialMapPose.end(), ',', ' ');
+	std::replace(initialMapPose.begin(), initialMapPose.end(), ';', ' ');
+	
+	float poseMatrix[nbRows * nbRows];
+	std::stringstream poseStringStream(initialMapPose);
+	for(int i = 0; i < nbRows * nbRows; i++)
+	{
+		if(!(poseStringStream >> poseMatrix[i]))
+		{
+			ROS_ERROR_STREAM("An error occurred while trying to parse the initial map pose. No transformation will be applied to the initial map.");
+			return parsedPose;
+		}
+	}
+	
+	float extraOutput = 0;
+	if((poseStringStream >> extraOutput))
+	{
+		ROS_ERROR_STREAM("Wrong initial pose matrix size. No transformation will be applied to the initial map.");
+		return parsedPose;
+	}
+	
+	for(int i = 0; i < nbRows * nbRows; i++)
+	{
+		parsedPose(i / nbRows, i % nbRows) = poseMatrix[i];
+	}
+	
+	return parsedPose;
+}
+
+void loadInitialMap()
+{
+	if(!initialMapFileName.empty())
+	{
+		PM::DataPoints initialMap = PM::DataPoints::load(initialMapFileName);
+		PM::TransformationParameters initialMapTransformation = parseInitialMapPose();
+		initialMap = transformation->compute(initialMap, initialMapTransformation);
+		mapper->setMap(initialMap);
+	}
+}
+
 void mapperShutdownLoop()
 {
 	std::chrono::duration<float> idleTime = std::chrono::duration<float>::zero();
@@ -155,8 +209,8 @@ void mapperShutdownLoop()
 		
 		if(idleTime > std::chrono::duration<float>(maxIdleTime))
 		{
-			ROS_INFO("Saving map to %s", mapFileName.c_str());
-			mapper->getMap().save(mapFileName);
+			ROS_INFO("Saving map to %s", finalMapFileName.c_str());
+			mapper->getMap().save(finalMapFileName);
 			ROS_INFO("Shutting down ROS");
 			ros::shutdown();
 		}
@@ -265,6 +319,8 @@ int main(int argc, char** argv)
 	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, mapUpdateCondition, mapUpdateOverlap, mapUpdateDelay,
 												mapUpdateDistance, minDistNewPoint, sensorMaxRange, priorDynamic, thresholdDynamic, beamHalfAngle, epsilonA,
 												epsilonD, alpha, beta, is3D, isOnline, computeProbDynamic, isMapping));
+	
+	loadInitialMap();
 	
 	std::thread mapperShutdownThread;
 	int messageQueueSize;

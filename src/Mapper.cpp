@@ -173,15 +173,7 @@ void Mapper::buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM
 	mapPostFilters.apply(mapInSensorFrame);                                              // TODO: find efficient way to compute this...
 	currentMap = transformation->compute(mapInSensorFrame, currentSensorPose);
 	
-	if(computeProbDynamic && !currentMap.descriptorExists("normals"))
-	{
-		throw std::runtime_error("compute_prob_dynamic is set to true, but field normals does not exist for map points.");
-	}
-	
-	mapLock.lock();
-	map = currentMap;
-	newMapAvailable = true;
-	mapLock.unlock();
+	setMap(currentMap);
 }
 
 PM::DataPoints Mapper::retrievePointsFurtherThanMinDistNewPoint(const PM::DataPoints& currentCloud, const PM::DataPoints& currentMap)
@@ -342,6 +334,19 @@ PM::DataPoints Mapper::getMap()
 	mapLock.unlock();
 	
 	return currentMap;
+}
+
+void Mapper::setMap(const PM::DataPoints& newMap)
+{
+	if(computeProbDynamic && !newMap.descriptorExists("normals"))
+	{
+		throw std::runtime_error("compute_prob_dynamic is set to true, but field normals does not exist for map points.");
+	}
+	
+	mapLock.lock();
+	map = newMap;
+	newMapAvailable = true;
+	mapLock.unlock();
 }
 
 bool Mapper::getNewMap(PM::DataPoints& mapOut)

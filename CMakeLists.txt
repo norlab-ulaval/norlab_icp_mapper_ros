@@ -10,6 +10,7 @@ add_compile_options(-std=c++11)
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   sensor_msgs
+  map_msgs
   tf2_ros
   tf2
   libpointmatcher_ros
@@ -109,7 +110,7 @@ find_package(libpointmatcher CONFIG)
 catkin_package(
   #  INCLUDE_DIRS include
   #  LIBRARIES norlab_icp_mapper
-  CATKIN_DEPENDS roscpp sensor_msgs tf2_ros tf2 libpointmatcher_ros
+  CATKIN_DEPENDS roscpp sensor_msgs map_msgs tf2_ros tf2 libpointmatcher_ros
   #  DEPENDS system_lib
 )
 

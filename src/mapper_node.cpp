@@ -3,6 +3,7 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
+#include <map_msgs/SaveMap.h>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -46,6 +47,7 @@ PM::TransformationParameters odomToMap;
 ros::Subscriber sub;
 ros::Publisher mapPublisher;
 ros::Publisher odomPublisher;
+ros::ServiceServer saveMapService;
 std::unique_ptr<tf2_ros::Buffer> tfBuffer;
 std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
@@ -194,6 +196,12 @@ void loadInitialMap()
 	}
 }
 
+void saveMap(std::string mapFileName)
+{
+	ROS_INFO("Saving map to %s", mapFileName.c_str());
+	mapper->getMap().save(mapFileName);
+}
+
 void mapperShutdownLoop()
 {
 	std::chrono::duration<float> idleTime = std::chrono::duration<float>::zero();
@@ -209,8 +217,7 @@ void mapperShutdownLoop()
 		
 		if(idleTime > std::chrono::duration<float>(maxIdleTime))
 		{
-			ROS_INFO("Saving map to %s", finalMapFileName.c_str());
-			mapper->getMap().save(finalMapFileName);
+			saveMap(finalMapFileName);
 			ROS_INFO("Shutting down ROS");
 			ros::shutdown();
 		}
@@ -272,6 +279,20 @@ void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
 void gotScan(const sensor_msgs::LaserScan& scanMsgIn)
 {
 	gotPointMatcherCloud(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(scanMsgIn), scanMsgIn.header.stamp);
+}
+
+bool saveMapCallback(map_msgs::SaveMap::Request& req, map_msgs::SaveMap::Response& res)
+{
+	try
+	{
+		saveMap(req.filename.data);
+		return true;
+	}
+	catch (const std::runtime_error& e)
+	{
+		ROS_ERROR_STREAM("Unable to save: " << e.what());
+		return false;
+	}
 }
 
 void mapPublisherLoop()
@@ -354,6 +375,8 @@ int main(int argc, char** argv)
 	}
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
+	
+	saveMapService = n.advertiseService("save_map", saveMapCallback);
 	
 	std::thread mapPublisherThread = std::thread(mapPublisherLoop);
 	std::thread mapTfPublisherThread = std::thread(mapTfPublisherLoop);

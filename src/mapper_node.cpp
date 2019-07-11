@@ -219,16 +219,15 @@ void mapperShutdownLoop()
 	}
 }
 
-void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
+void gotPointMatcherCloud(PM::DataPoints cloud, ros::Time timeStamp)
 {
-	ros::Time timeStamp = cloudMsgIn.header.stamp;
-	PM::DataPoints cloud = PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(cloudMsgIn);
+	int nbRows = is3D ? 4 : 3;
 	
 	PM::TransformationParameters sensorToOdom;
 	try
 	{
 		geometry_msgs::TransformStamped sensorToOdomTf = tfBuffer->lookupTransform(odomFrame, sensorFrame, timeStamp, ros::Duration(0.1));
-		sensorToOdom = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(sensorToOdomTf);
+		sensorToOdom = PointMatcher_ROS::matrixToDim<T>(PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(sensorToOdomTf), nbRows);
 	}
 	catch(tf2::TransformException& ex)
 	{
@@ -248,7 +247,7 @@ void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
 	try
 	{
 		geometry_msgs::TransformStamped robotToSensorTf = tfBuffer->lookupTransform(sensorFrame, robotFrame, timeStamp, ros::Duration(0.1));
-		robotToSensor = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(robotToSensorTf);
+		robotToSensor = PointMatcher_ROS::matrixToDim<T>(PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(robotToSensorTf), nbRows);
 	}
 	catch(tf2::TransformException& ex)
 	{
@@ -265,9 +264,14 @@ void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
 	idleTimeLock.unlock();
 }
 
+void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
+{
+	gotPointMatcherCloud(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(cloudMsgIn), cloudMsgIn.header.stamp);
+}
+
 void gotScan(const sensor_msgs::LaserScan& scanMsgIn)
 {
-	// Handle 2D scans
+	gotPointMatcherCloud(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(scanMsgIn), scanMsgIn.header.stamp);
 }
 
 void mapPublisherLoop()

@@ -30,14 +30,8 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 	if(!icpConfigFilePath.empty())
 	{
 		std::ifstream ifs(icpConfigFilePath.c_str());
-		if(ifs.good())
-		{
-			icp.loadFromYaml(ifs);
-		}
-		else
-		{
-			throw std::runtime_error("Cannot load ICP config from YAML file " + icpConfigFilePath);
-		}
+		icp.loadFromYaml(ifs);
+		ifs.close();
 	}
 	else
 	{
@@ -47,27 +41,15 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 	if(!inputFiltersConfigFilePath.empty())
 	{
 		std::ifstream ifs(inputFiltersConfigFilePath.c_str());
-		if(ifs.good())
-		{
-			inputFilters = PM::DataPointsFilters(ifs);
-		}
-		else
-		{
-			throw std::runtime_error("Cannot load input filters config from YAML file " + inputFiltersConfigFilePath);
-		}
+		inputFilters = PM::DataPointsFilters(ifs);
+		ifs.close();
 	}
 	
 	if(!mapPostFiltersConfigFilePath.empty())
 	{
 		std::ifstream ifs(mapPostFiltersConfigFilePath.c_str());
-		if(ifs.good())
-		{
-			mapPostFilters = PM::DataPointsFilters(ifs);
-		}
-		else
-		{
-			throw std::runtime_error("Cannot load map post-filters config from YAML file " + mapPostFiltersConfigFilePath);
-		}
+		mapPostFilters = PM::DataPointsFilters(ifs);
+		ifs.close();
 	}
 	
 	PM::Parameters radiusFilterParams;
@@ -138,16 +120,12 @@ bool Mapper::shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_c
 	{
 		return (currentTime - lastTimeMapWasUpdated) > std::chrono::duration<float>(mapUpdateDelay);
 	}
-	else if(mapUpdateCondition == "distance")
+	else
 	{
 		int nbRows = is3D ? 3 : 2;
 		PM::Vector lastSensorLocation = lastSensorPoseWhereMapWasUpdated.topRightCorner(nbRows, 1);
 		PM::Vector currentSensorLocation = currentSensorPose.topRightCorner(nbRows, 1);
 		return std::abs((currentSensorLocation - lastSensorLocation).norm()) > mapUpdateDistance;
-	}
-	else
-	{
-		throw std::runtime_error("Invalid map update condition: " + mapUpdateCondition);
 	}
 }
 
@@ -364,7 +342,7 @@ void Mapper::setMap(const PM::DataPoints& newMap)
 {
 	if(computeProbDynamic && !newMap.descriptorExists("normals"))
 	{
-		throw std::runtime_error("compute_prob_dynamic is set to true, but field normals does not exist for map points.");
+		throw std::runtime_error("compute prob dynamic is set to true, but field normals does not exist for map points.");
 	}
 	
 	mapLock.lock();

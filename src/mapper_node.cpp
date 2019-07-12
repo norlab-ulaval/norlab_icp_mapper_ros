@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <fstream>
 
 std::string odomFrame;
 std::string sensorFrame;
@@ -84,6 +85,147 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<bool>("is_mapping", isMapping, true);
 }
 
+void validateParameters()
+{
+	if(!initialMapFileName.empty())
+	{
+		std::ifstream ifs(initialMapFileName.c_str());
+		if(!ifs.good())
+		{
+			throw std::runtime_error("Invalid initial map file: " + initialMapFileName);
+		}
+		ifs.close();
+	}
+	
+	if(!isOnline)
+	{
+		std::ofstream ofs(finalMapFileName.c_str(), std::ios_base::app);
+		if(!ofs.good())
+		{
+			throw std::runtime_error("Invalid final map file: " + finalMapFileName);
+		}
+		ofs.close();
+	}
+	
+	if(!icpConfig.empty())
+	{
+		std::ifstream ifs(icpConfig.c_str());
+		if(!ifs.good())
+		{
+			throw std::runtime_error("Invalid icp config file: " + icpConfig);
+		}
+		ifs.close();
+	}
+	
+	if(!inputFiltersConfig.empty())
+	{
+		std::ifstream ifs(inputFiltersConfig.c_str());
+		if(!ifs.good())
+		{
+			throw std::runtime_error("Invalid input filters config file: " + inputFiltersConfig);
+		}
+		ifs.close();
+	}
+	
+	if(!mapPostFiltersConfig.empty())
+	{
+		std::ifstream ifs(mapPostFiltersConfig.c_str());
+		if(!ifs.good())
+		{
+			throw std::runtime_error("Invalid map post filters config file: " + mapPostFiltersConfig);
+		}
+		ifs.close();
+	}
+	
+	if(mapUpdateCondition != "overlap" && mapUpdateCondition != "delay" && mapUpdateCondition != "distance")
+	{
+		throw std::runtime_error("Invalid map update condition: " + mapUpdateCondition);
+	}
+	
+	if(mapUpdateOverlap < 0 || mapUpdateOverlap > 1)
+	{
+		throw std::runtime_error("Invalid map update overlap: " + std::to_string(mapUpdateOverlap));
+	}
+	
+	if(mapUpdateDelay < 0)
+	{
+		throw std::runtime_error("Invalid map update delay: " + std::to_string(mapUpdateDelay));
+	}
+	
+	if(mapUpdateDistance < 0)
+	{
+		throw std::runtime_error("Invalid map update distance: " + std::to_string(mapUpdateDistance));
+	}
+	
+	if(mapPublishRate <= 0)
+	{
+		throw std::runtime_error("Invalid map publish rate: " + std::to_string(mapPublishRate));
+	}
+	
+	if(mapTfPublishRate <= 0)
+	{
+		throw std::runtime_error("Invalid map tf publish rate: " + std::to_string(mapTfPublishRate));
+	}
+	
+	if(!isOnline)
+	{
+		if(maxIdleTime < 0)
+		{
+			throw std::runtime_error("Invalid max idle time: " + std::to_string(maxIdleTime));
+		}
+	}
+	
+	if(minDistNewPoint < 0)
+	{
+		throw std::runtime_error("Invalid minimum distance of new point: " + std::to_string(minDistNewPoint));
+	}
+	
+	if(sensorMaxRange < 0)
+	{
+		throw std::runtime_error("Invalid sensor max range: " + std::to_string(sensorMaxRange));
+	}
+	
+	if(priorDynamic < 0 || priorDynamic > 1)
+	{
+		throw std::runtime_error("Invalid prior dynamic: " + std::to_string(priorDynamic));
+	}
+	
+	if(thresholdDynamic < 0 || thresholdDynamic > 1)
+	{
+		throw std::runtime_error("Invalid threshold dynamic: " + std::to_string(thresholdDynamic));
+	}
+	
+	if(beamHalfAngle < 0 || beamHalfAngle > M_PI_2)
+	{
+		throw std::runtime_error("Invalid beam half angle: " + std::to_string(beamHalfAngle));
+	}
+	
+	if(epsilonA < 0)
+	{
+		throw std::runtime_error("Invalid epsilon a: " + std::to_string(epsilonA));
+	}
+	
+	if(epsilonD < 0)
+	{
+		throw std::runtime_error("Invalid epsilon d: " + std::to_string(epsilonD));
+	}
+	
+	if(alpha < 0 || alpha > 1)
+	{
+		throw std::runtime_error("Invalid alpha: " + std::to_string(alpha));
+	}
+	
+	if(beta < 0 || beta > 1)
+	{
+		throw std::runtime_error("Invalid beta: " + std::to_string(beta));
+	}
+	
+	if(!isMapping && initialMapFileName.empty())
+	{
+		throw std::runtime_error("is mapping is set to false, but initial map file name was not specified.");
+	}
+}
+
 PM::TransformationParameters parseInitialMapPose()
 {
 	int nbRows = is3D ? 4 : 3;
@@ -101,16 +243,14 @@ PM::TransformationParameters parseInitialMapPose()
 	{
 		if(!(poseStringStream >> poseMatrix[i]))
 		{
-			ROS_ERROR_STREAM("An error occurred while trying to parse the initial map pose. No transformation will be applied to the initial map.");
-			return parsedPose;
+			throw std::runtime_error("An error occurred while trying to parse the initial map pose.");
 		}
 	}
 	
 	float extraOutput = 0;
 	if((poseStringStream >> extraOutput))
 	{
-		ROS_ERROR_STREAM("Wrong initial pose matrix size. No transformation will be applied to the initial map.");
-		return parsedPose;
+		throw std::runtime_error("Wrong initial pose matrix size.");
 	}
 	
 	for(int i = 0; i < nbRows * nbRows; i++)
@@ -263,6 +403,7 @@ int main(int argc, char** argv)
 	ros::NodeHandle pn("~");
 	
 	retrieveParameters(pn);
+	validateParameters();
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	

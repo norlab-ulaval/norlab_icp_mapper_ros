@@ -228,47 +228,37 @@ void mapperShutdownLoop()
 
 void gotPointMatcherCloud(PM::DataPoints cloud, ros::Time timeStamp)
 {
-	int nbRows = is3D ? 4 : 3;
-	
-	PM::TransformationParameters sensorToOdom;
 	try
 	{
+		int nbRows = is3D ? 4 : 3;
+		
 		geometry_msgs::TransformStamped sensorToOdomTf = tfBuffer->lookupTransform(odomFrame, sensorFrame, timeStamp, ros::Duration(0.1));
-		sensorToOdom = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(sensorToOdomTf, nbRows);
-	}
-	catch(tf2::TransformException& ex)
-	{
-		ROS_WARN("%s", ex.what());
-		return;
-	}
-	
-	PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
-	mapper->processCloud(cloud, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
-	const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
-	
-	mapTfLock.lock();
-	odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
-	mapTfLock.unlock();
-	
-	PM::TransformationParameters robotToSensor;
-	try
-	{
+		PM::TransformationParameters sensorToOdom = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(sensorToOdomTf, nbRows);
+		
+		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
+		mapper->processCloud(cloud, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
+		
+		mapTfLock.lock();
+		odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
+		mapTfLock.unlock();
+		
 		geometry_msgs::TransformStamped robotToSensorTf = tfBuffer->lookupTransform(sensorFrame, robotFrame, timeStamp, ros::Duration(0.1));
-		robotToSensor = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(robotToSensorTf, nbRows);
+		PM::TransformationParameters robotToSensor = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(robotToSensorTf, nbRows);
+		
+		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
+		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", timeStamp);
+		odomPublisher.publish(odomMsgOut);
+		
+		idleTimeLock.lock();
+		lastTimePointsWereProcessed = std::chrono::steady_clock::now();
+		idleTimeLock.unlock();
 	}
 	catch(tf2::TransformException& ex)
 	{
 		ROS_WARN("%s", ex.what());
 		return;
 	}
-	
-	PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
-	nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", timeStamp);
-	odomPublisher.publish(odomMsgOut);
-	
-	idleTimeLock.lock();
-	lastTimePointsWereProcessed = std::chrono::steady_clock::now();
-	idleTimeLock.unlock();
 }
 
 void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)

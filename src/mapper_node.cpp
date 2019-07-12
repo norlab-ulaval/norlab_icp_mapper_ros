@@ -7,7 +7,6 @@
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <fstream>
 
 std::string odomFrame;
 std::string sensorFrame;
@@ -39,8 +38,6 @@ bool isOnline;
 bool computeProbDynamic;
 bool isMapping;
 
-PM::DataPointsFilters inputFilters;
-PM::DataPointsFilters mapPostFilters;
 std::shared_ptr<PM::Transformation> transformation;
 std::unique_ptr<Mapper> mapper;
 PM::TransformationParameters odomToMap;
@@ -85,35 +82,6 @@ void retrieveParameters(const ros::NodeHandle& pn)
 	pn.param<bool>("is_online", isOnline, true);
 	pn.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
 	pn.param<bool>("is_mapping", isMapping, true);
-}
-
-void loadExternalParameters()
-{
-	if(!inputFiltersConfig.empty())
-	{
-		std::ifstream ifs(inputFiltersConfig.c_str());
-		if(ifs.good())
-		{
-			inputFilters = PM::DataPointsFilters(ifs);
-		}
-		else
-		{
-			ROS_ERROR_STREAM("Cannot load input filters config from YAML file " << inputFiltersConfig);
-		}
-	}
-	
-	if(!mapPostFiltersConfig.empty())
-	{
-		std::ifstream ifs(mapPostFiltersConfig.c_str());
-		if(ifs.good())
-		{
-			mapPostFilters = PM::DataPointsFilters(ifs);
-		}
-		else
-		{
-			ROS_ERROR_STREAM("Cannot load map post-filters config from YAML file " << mapPostFiltersConfig);
-		}
-	}
 }
 
 PM::TransformationParameters parseInitialMapPose()
@@ -246,7 +214,7 @@ bool saveMapCallback(map_msgs::SaveMap::Request& req, map_msgs::SaveMap::Respons
 		saveMap(req.filename.data);
 		return true;
 	}
-	catch (const std::runtime_error& e)
+	catch(const std::runtime_error& e)
 	{
 		ROS_ERROR_STREAM("Unable to save: " << e.what());
 		return false;
@@ -295,11 +263,10 @@ int main(int argc, char** argv)
 	ros::NodeHandle pn("~");
 	
 	retrieveParameters(pn);
-	loadExternalParameters();
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFilters, mapPostFilters, mapUpdateCondition, mapUpdateOverlap, mapUpdateDelay,
+	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFiltersConfig, mapPostFiltersConfig, mapUpdateCondition, mapUpdateOverlap, mapUpdateDelay,
 												mapUpdateDistance, minDistNewPoint, sensorMaxRange, priorDynamic, thresholdDynamic, beamHalfAngle, epsilonA,
 												epsilonD, alpha, beta, is3D, isOnline, computeProbDynamic, isMapping));
 	

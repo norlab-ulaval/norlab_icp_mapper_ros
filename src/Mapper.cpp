@@ -3,12 +3,10 @@
 #include <fstream>
 #include <chrono>
 
-Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters, PM::DataPointsFilters mapPostFilters, std::string mapUpdateCondition,
+Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFilePath, std::string mapPostFiltersConfigFilePath, std::string mapUpdateCondition,
 			   float mapUpdateOverlap, float mapUpdateDelay, float mapUpdateDistance, float minDistNewPoint, float sensorMaxRange,
 			   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
 			   bool is3D, bool isOnline, bool computeProbDynamic, bool isMapping):
-		inputFilters(inputFilters),
-		mapPostFilters(mapPostFilters),
 		transformation(PM::get().TransformationRegistrar.create("RigidTransformation")),
 		mapUpdateCondition(mapUpdateCondition),
 		mapUpdateOverlap(mapUpdateOverlap),
@@ -29,7 +27,7 @@ Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters
 		isMapping(isMapping),
 		newMapAvailable(false)
 {
-	if(icpConfigFilePath != "")
+	if(!icpConfigFilePath.empty())
 	{
 		std::ifstream ifs(icpConfigFilePath.c_str());
 		if(ifs.good())
@@ -38,12 +36,38 @@ Mapper::Mapper(std::string icpConfigFilePath, PM::DataPointsFilters inputFilters
 		}
 		else
 		{
-			icp.setDefault();
+			throw std::runtime_error("Cannot load ICP config from YAML file " + icpConfigFilePath);
 		}
 	}
 	else
 	{
 		icp.setDefault();
+	}
+	
+	if(!inputFiltersConfigFilePath.empty())
+	{
+		std::ifstream ifs(inputFiltersConfigFilePath.c_str());
+		if(ifs.good())
+		{
+			inputFilters = PM::DataPointsFilters(ifs);
+		}
+		else
+		{
+			throw std::runtime_error("Cannot load input filters config from YAML file " + inputFiltersConfigFilePath);
+		}
+	}
+	
+	if(!mapPostFiltersConfigFilePath.empty())
+	{
+		std::ifstream ifs(mapPostFiltersConfigFilePath.c_str());
+		if(ifs.good())
+		{
+			mapPostFilters = PM::DataPointsFilters(ifs);
+		}
+		else
+		{
+			throw std::runtime_error("Cannot load map post-filters config from YAML file " + mapPostFiltersConfigFilePath);
+		}
 	}
 	
 	PM::Parameters radiusFilterParams;

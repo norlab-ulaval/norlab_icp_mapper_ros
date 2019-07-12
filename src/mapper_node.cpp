@@ -54,38 +54,6 @@ std::mutex mapTfLock;
 std::chrono::time_point<std::chrono::steady_clock> lastTimePointsWereProcessed;
 std::mutex idleTimeLock;
 
-// ========================================================= Node Parameters =========================================================
-// odom_frame: Name of the frame used for odometry.
-// sensor_frame: Name of the frame in which the points are published.
-// robot_frame: Name of the frame centered on the robot.
-// initial_map_file_name: Name of the file from which the initial map is loaded.
-// initial_map_pose: Transformation matrix in homogeneous coordinates describing the pose of the initial map in the current map frame.
-// final_map_file_name: Name of the file in which the final map is saved when is_online is false.
-// icp_config: Name of the file containing the libpointmatcher icp config.
-// input_filters_config: Name of the file containing the filters applied to the sensor points.
-// map_post_filters_config: Name of the file containing the filters applied to the map after the update.
-// map_update_condition: Condition for map update. It can either be 'overlap', 'delay' or 'distance'.
-// map_update_overlap: Overlap between sensor and map points under which the map is updated.
-// map_update_delay: Delay since last map update over which the map is updated (in seconds).
-// map_update_distance: Euclidean distance from last map update over which the map is updated (in meters).
-// map_publish_rate: Rate at which the map is published (in Hertz). It can be slower depending on the map update rate.
-// map_tf_publish_rate: Rate at which the map tf is published (in Hertz).
-// max_idle_time: Delay to wait being idle before shutting down ROS when is_online is false (in seconds). The specified delay is respected up to a precision of 1/10th of a second.
-// min_dist_new_point: Distance from current map points under which a new point is not added to the map (in meters).
-// sensor_max_range: Maximum reading distance of the laser. Used to cut the global map before matching (in meters).
-// prior_dynamic: A priori probability of points being dynamic.
-// threshold_dynamic: Probability at which a point is considered permanently dynamic.
-// beam_half_angle: Half angle of the cones formed by the sensor laser beams (in rad).
-// epsilon_a: Error proportional to the sensor distance.
-// epsilon_d: Fix error on the sensor distance (in meters).
-// alpha: Probability of staying static given that the point was static.
-// beta: Probability of staying dynamic given that the point was dynamic.
-// is_3D: true when a 3D sensor is used, false when a 2D sensor is used.
-// is_online: true when online mapping is wanted, false otherwise.
-// compute_prob_dynamic: true when computation of probability of points being dynamic is wanted, false otherwise.
-// is_mapping: true when map updates are wanted, false when only localization is wanted.
-// ===================================================================================================================================
-
 void retrieveParameters(const ros::NodeHandle& pn)
 {
 	pn.param<std::string>("odom_frame", odomFrame, "odom");

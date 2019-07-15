@@ -197,6 +197,7 @@ int main(int argc, char** argv)
 		tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(ros::Duration(ros::DURATION_MAX)));
 		messageQueueSize = 0;
 	}
+	
 	tf2_ros::TransformListener tfListener(*tfBuffer);
 	tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
 	
@@ -210,6 +211,7 @@ int main(int argc, char** argv)
 		sub = n.subscribe("points_in", messageQueueSize, laserScanCallback);
 		odomToMap = PM::Matrix::Identity(3, 3);
 	}
+	
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
 	

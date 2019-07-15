@@ -28,6 +28,13 @@ void loadInitialMap()
 	if(!params->initialMapFileName.empty())
 	{
 		PM::DataPoints initialMap = PM::DataPoints::load(params->initialMapFileName);
+		
+		int euclideanDim = params->is3D ? 3 : 2;
+		if(initialMap.getEuclideanDim() != euclideanDim)
+		{
+			throw std::runtime_error("Invalid initial map dimension.");
+		}
+		
 		initialMap = transformation->compute(initialMap, params->initialMapPose);
 		mapper->setMap(initialMap);
 	}
@@ -67,10 +74,8 @@ void gotCloud(PM::DataPoints cloud, ros::Time timeStamp)
 {
 	try
 	{
-		int nbRows = params->is3D ? 4 : 3;
-		
 		geometry_msgs::TransformStamped sensorToOdomTf = tfBuffer->lookupTransform(params->odomFrame, params->sensorFrame, timeStamp, ros::Duration(0.1));
-		PM::TransformationParameters sensorToOdom = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(sensorToOdomTf, nbRows);
+		PM::TransformationParameters sensorToOdom = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(sensorToOdomTf, cloud.getHomogeneousDim());
 		
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		mapper->processCloud(cloud, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
@@ -81,7 +86,7 @@ void gotCloud(PM::DataPoints cloud, ros::Time timeStamp)
 		mapTfLock.unlock();
 		
 		geometry_msgs::TransformStamped robotToSensorTf = tfBuffer->lookupTransform(params->sensorFrame, params->robotFrame, timeStamp, ros::Duration(0.1));
-		PM::TransformationParameters robotToSensor = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(robotToSensorTf, nbRows);
+		PM::TransformationParameters robotToSensor = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(robotToSensorTf, cloud.getHomogeneousDim());
 		
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", timeStamp);

@@ -58,8 +58,8 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 	radiusFilterParams["removeInside"] = "0";
 	radiusFilter = PM::get().DataPointsFilterRegistrar.create("DistanceLimitDataPointsFilter", radiusFilterParams);
 	
-	int nbRows = is3D ? 4 : 3;
-	sensorPose = PM::Matrix::Identity(nbRows, nbRows);
+	int homogeneousDim = is3D ? 4 : 3;
+	sensorPose = PM::Matrix::Identity(homogeneousDim, homogeneousDim);
 }
 
 void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
@@ -122,9 +122,9 @@ bool Mapper::shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_c
 	}
 	else
 	{
-		int nbRows = is3D ? 3 : 2;
-		PM::Vector lastSensorLocation = lastSensorPoseWhereMapWasUpdated.topRightCorner(nbRows, 1);
-		PM::Vector currentSensorLocation = currentSensorPose.topRightCorner(nbRows, 1);
+		int euclideanDim = is3D ? 3 : 2;
+		PM::Vector lastSensorLocation = lastSensorPoseWhereMapWasUpdated.topRightCorner(euclideanDim, 1);
+		PM::Vector currentSensorLocation = currentSensorPose.topRightCorner(euclideanDim, 1);
 		return std::abs((currentSensorLocation - lastSensorLocation).norm()) > mapUpdateDistance;
 	}
 }
@@ -207,7 +207,6 @@ void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& curren
 													const PM::TransformationParameters& currentSensorPose)
 {
 	typedef Nabo::NearestNeighbourSearch<T> NNS;
-	const int nbRows = is3D ? 3 : 2;
 	const float eps = 0.0001;
 	
 	PM::DataPoints currentCloudInSensorFrame = transformation->compute(currentCloud, currentSensorPose.inverse());
@@ -221,7 +220,7 @@ void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& curren
 	int nbPointsCutMap = 0;
 	for(int i = 0; i < currentMap.getNbPoints(); i++)
 	{
-		if(cutMapInSensorFrame.features.col(i).head(nbRows).norm() < sensorMaxRange)
+		if(cutMapInSensorFrame.features.col(i).head(cutMapInSensorFrame.getEuclideanDim()).norm() < sensorMaxRange)
 		{
 			cutMapInSensorFrame.setColFrom(nbPointsCutMap, cutMapInSensorFrame, i);
 			globalId(0, nbPointsCutMap) = i;
@@ -248,8 +247,8 @@ void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& curren
 			const int readingPointId = ids(0, i);
 			const int mapPointId = globalId(0, i);
 			
-			const Eigen::VectorXf readingPoint = currentCloudInSensorFrame.features.col(readingPointId).head(nbRows);
-			const Eigen::VectorXf mapPoint = cutMapInSensorFrame.features.col(i).head(nbRows);
+			const Eigen::VectorXf readingPoint = currentCloudInSensorFrame.features.col(readingPointId).head(currentCloudInSensorFrame.getEuclideanDim());
+			const Eigen::VectorXf mapPoint = cutMapInSensorFrame.features.col(i).head(cutMapInSensorFrame.getEuclideanDim());
 			const float delta = (readingPoint - mapPoint).norm();
 			const float d_max = epsilonA * readingPoint.norm();
 			
@@ -313,8 +312,7 @@ void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& curren
 
 void Mapper::convertToSphericalCoordinates(const PM::DataPoints& points, PM::Matrix& radii, PM::Matrix& angles)
 {
-	const int nbRows = is3D ? 3 : 2;
-	radii = points.features.topRows(nbRows).colwise().norm();
+	radii = points.features.topRows(points.getEuclideanDim()).colwise().norm();
 	angles = PM::Matrix(2, points.getNbPoints());
 	
 	for(int i = 0; i < points.getNbPoints(); i++)

@@ -189,8 +189,8 @@ void NodeParameters::parseComplexParameters()
 
 void NodeParameters::parseInitialMapPose()
 {
-	int nbRows = is3D ? 4 : 3;
-	initialMapPose = PM::TransformationParameters::Identity(nbRows, nbRows);
+	int homogeneousDim = is3D ? 4 : 3;
+	initialMapPose = PM::TransformationParameters::Identity(homogeneousDim, homogeneousDim);
 	
 	if(!initialMapFileName.empty())
 	{
@@ -199,9 +199,9 @@ void NodeParameters::parseInitialMapPose()
 		std::replace(initialMapPoseString.begin(), initialMapPoseString.end(), ',', ' ');
 		std::replace(initialMapPoseString.begin(), initialMapPoseString.end(), ';', ' ');
 		
-		float poseMatrix[nbRows * nbRows];
+		float poseMatrix[homogeneousDim * homogeneousDim];
 		std::stringstream poseStringStream(initialMapPoseString);
-		for(int i = 0; i < nbRows * nbRows; i++)
+		for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
 		{
 			if(!(poseStringStream >> poseMatrix[i]))
 			{
@@ -215,9 +215,9 @@ void NodeParameters::parseInitialMapPose()
 			throw std::runtime_error("Invalid initial map pose dimension.");
 		}
 		
-		for(int i = 0; i < nbRows * nbRows; i++)
+		for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
 		{
-			initialMapPose(i / nbRows, i % nbRows) = poseMatrix[i];
+			initialMapPose(i / homogeneousDim, i % homogeneousDim) = poseMatrix[i];
 		}
 	}
 }

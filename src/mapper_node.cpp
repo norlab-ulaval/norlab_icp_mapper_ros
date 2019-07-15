@@ -70,14 +70,19 @@ void mapperShutdownLoop()
 	}
 }
 
+PM::TransformationParameters findTransform(std::string sourceFrame, std::string targetFrame, ros::Time time, int transformDimension)
+{
+	geometry_msgs::TransformStamped tf = tfBuffer->lookupTransform(targetFrame, sourceFrame, time, ros::Duration(0.1));
+	return PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(tf, transformDimension);
+}
+
 void gotCloud(PM::DataPoints cloud, ros::Time timeStamp)
 {
 	try
 	{
-		geometry_msgs::TransformStamped sensorToOdomTf = tfBuffer->lookupTransform(params->odomFrame, params->sensorFrame, timeStamp, ros::Duration(0.1));
-		PM::TransformationParameters sensorToOdom = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(sensorToOdomTf, cloud.getHomogeneousDim());
-		
+		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, cloud.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
+		
 		mapper->processCloud(cloud, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
 		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
 		
@@ -85,10 +90,9 @@ void gotCloud(PM::DataPoints cloud, ros::Time timeStamp)
 		odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
 		mapTfLock.unlock();
 		
-		geometry_msgs::TransformStamped robotToSensorTf = tfBuffer->lookupTransform(params->sensorFrame, params->robotFrame, timeStamp, ros::Duration(0.1));
-		PM::TransformationParameters robotToSensor = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(robotToSensorTf, cloud.getHomogeneousDim());
-		
+		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, params->sensorFrame, timeStamp, cloud.getHomogeneousDim());
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
+		
 		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", timeStamp);
 		odomPublisher.publish(odomMsgOut);
 		

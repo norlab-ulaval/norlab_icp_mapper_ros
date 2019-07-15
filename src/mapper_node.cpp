@@ -20,7 +20,7 @@ ros::ServiceServer saveMapService;
 std::unique_ptr<tf2_ros::Buffer> tfBuffer;
 std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
-std::chrono::time_point<std::chrono::steady_clock> lastTimePointsWereProcessed;
+std::chrono::time_point<std::chrono::steady_clock> lastTimeCloudWasProcessed;
 std::mutex idleTimeLock;
 
 void loadInitialMap()
@@ -53,9 +53,9 @@ void mapperShutdownLoop()
 	while(ros::ok())
 	{
 		idleTimeLock.lock();
-		if(lastTimePointsWereProcessed.time_since_epoch().count())
+		if(lastTimeCloudWasProcessed.time_since_epoch().count())
 		{
-			idleTime = std::chrono::steady_clock::now() - lastTimePointsWereProcessed;
+			idleTime = std::chrono::steady_clock::now() - lastTimeCloudWasProcessed;
 		}
 		idleTimeLock.unlock();
 		
@@ -97,7 +97,7 @@ void gotCloud(PM::DataPoints cloud, ros::Time timeStamp)
 		odomPublisher.publish(odomMsgOut);
 		
 		idleTimeLock.lock();
-		lastTimePointsWereProcessed = std::chrono::steady_clock::now();
+		lastTimeCloudWasProcessed = std::chrono::steady_clock::now();
 		idleTimeLock.unlock();
 	}
 	catch(tf2::TransformException& ex)

@@ -67,7 +67,7 @@ void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, const PM::Transfor
 {
 	inputFilters.apply(cloudInSensorFrame);
 	
-	PM::DataPoints cloudInMapFrameBeforeCorrection = transformation->compute(cloudInSensorFrame, estimatedSensorPose);
+	PM::DataPoints cloudInMapFrame = transformation->compute(cloudInSensorFrame, estimatedSensorPose);
 	
 	mapLock.lock();
 	PM::DataPoints currentMap = map;
@@ -77,20 +77,20 @@ void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, const PM::Transfor
 	{
 		sensorPose = estimatedSensorPose;
 		
-		updateMap(cloudInMapFrameBeforeCorrection, timeStamp);
+		updateMap(cloudInMapFrame, timeStamp);
 	}
 	else
 	{
 		PM::DataPoints cutMapInSensorFrame = transformation->compute(currentMap, estimatedSensorPose.inverse());
-		radiusFilter->inPlaceFilter(cutMapInSensorFrame);                                              // TODO: find efficient way to compute this...
+		radiusFilter->inPlaceFilter(cutMapInSensorFrame);
 		PM::DataPoints cutMap = transformation->compute(cutMapInSensorFrame, estimatedSensorPose);
 		
-		PM::TransformationParameters correction = icp(cloudInMapFrameBeforeCorrection, cutMap);
+		PM::TransformationParameters correction = icp(cloudInMapFrame, cutMap);
 		sensorPose = correction * estimatedSensorPose;
 		
 		if(shouldUpdateMap(timeStamp, sensorPose, icp.errorMinimizer->getOverlap()))
 		{
-			updateMap(transformation->compute(cloudInMapFrameBeforeCorrection, correction), timeStamp);
+			updateMap(transformation->compute(cloudInMapFrame, correction), timeStamp);
 		}
 	}
 }
@@ -161,13 +161,12 @@ void Mapper::buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM
 	}
 	else
 	{
-		PM::DataPoints cloudPointsToKeep = retrievePointsFurtherThanMinDistNewPoint(currentCloud, currentMap);
-		
 		if(computeProbDynamic)
 		{
 			computeProbabilityOfPointsBeingDynamic(currentCloud, currentMap, currentSensorPose);
 		}
 		
+		PM::DataPoints cloudPointsToKeep = retrievePointsFurtherThanMinDistNewPoint(currentCloud, currentMap);
 		currentMap.concatenate(cloudPointsToKeep);
 	}
 	

@@ -63,7 +63,7 @@ void mapperShutdownLoop()
 	}
 }
 
-void gotPointMatcherCloud(PM::DataPoints cloud, ros::Time timeStamp)
+void gotCloud(PM::DataPoints cloud, ros::Time timeStamp)
 {
 	try
 	{
@@ -98,14 +98,14 @@ void gotPointMatcherCloud(PM::DataPoints cloud, ros::Time timeStamp)
 	}
 }
 
-void gotCloud(const sensor_msgs::PointCloud2& cloudMsgIn)
+void pointCloud2Callback(const sensor_msgs::PointCloud2& cloudMsgIn)
 {
-	gotPointMatcherCloud(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(cloudMsgIn), cloudMsgIn.header.stamp);
+	gotCloud(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(cloudMsgIn), cloudMsgIn.header.stamp);
 }
 
-void gotScan(const sensor_msgs::LaserScan& scanMsgIn)
+void laserScanCallback(const sensor_msgs::LaserScan& scanMsgIn)
 {
-	gotPointMatcherCloud(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(scanMsgIn), scanMsgIn.header.stamp);
+	gotCloud(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(scanMsgIn), scanMsgIn.header.stamp);
 }
 
 bool saveMapCallback(map_msgs::SaveMap::Request& req, map_msgs::SaveMap::Response& res)
@@ -193,12 +193,12 @@ int main(int argc, char** argv)
 	
 	if(params->is3D)
 	{
-		sub = n.subscribe("points_in", messageQueueSize, gotCloud);
+		sub = n.subscribe("points_in", messageQueueSize, pointCloud2Callback);
 		odomToMap = PM::Matrix::Identity(4, 4);
 	}
 	else
 	{
-		sub = n.subscribe("points_in", messageQueueSize, gotScan);
+		sub = n.subscribe("points_in", messageQueueSize, laserScanCallback);
 		odomToMap = PM::Matrix::Identity(3, 3);
 	}
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);

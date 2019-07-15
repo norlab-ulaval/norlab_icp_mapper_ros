@@ -1,3 +1,4 @@
+#include "NodeParameters.h"
 #include "Mapper.h"
 #include <ros/ros.h>
 #include <tf2_ros/transform_broadcaster.h>
@@ -7,38 +8,8 @@
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <fstream>
 
-std::string odomFrame;
-std::string sensorFrame;
-std::string robotFrame;
-std::string initialMapFileName;
-std::string initialMapPose;
-std::string finalMapFileName;
-std::string icpConfig;
-std::string inputFiltersConfig;
-std::string mapPostFiltersConfig;
-std::string mapUpdateCondition;
-float mapUpdateOverlap;
-float mapUpdateDelay;
-float mapUpdateDistance;
-float mapPublishRate;
-float mapTfPublishRate;
-float maxIdleTime;
-float minDistNewPoint;
-float sensorMaxRange;
-float priorDynamic;
-float thresholdDynamic;
-float beamHalfAngle;
-float epsilonA;
-float epsilonD;
-float alpha;
-float beta;
-bool is3D;
-bool isOnline;
-bool computeProbDynamic;
-bool isMapping;
-
+std::unique_ptr<NodeParameters> params;
 std::shared_ptr<PM::Transformation> transformation;
 std::unique_ptr<Mapper> mapper;
 PM::TransformationParameters odomToMap;
@@ -52,222 +23,12 @@ std::mutex mapTfLock;
 std::chrono::time_point<std::chrono::steady_clock> lastTimePointsWereProcessed;
 std::mutex idleTimeLock;
 
-void retrieveParameters(const ros::NodeHandle& pn)
-{
-	pn.param<std::string>("odom_frame", odomFrame, "odom");
-	pn.param<std::string>("sensor_frame", sensorFrame, "velodyne");
-	pn.param<std::string>("robot_frame", robotFrame, "base_link");
-	pn.param<std::string>("initial_map_file_name", initialMapFileName, "");
-	pn.param<std::string>("initial_map_pose", initialMapPose, "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]");
-	pn.param<std::string>("final_map_file_name", finalMapFileName, "map.vtk");
-	pn.param<std::string>("icp_config", icpConfig, "");
-	pn.param<std::string>("input_filters_config", inputFiltersConfig, "");
-	pn.param<std::string>("map_post_filters_config", mapPostFiltersConfig, "");
-	pn.param<std::string>("map_update_condition", mapUpdateCondition, "overlap");
-	pn.param<float>("map_update_overlap", mapUpdateOverlap, 0.9);
-	pn.param<float>("map_update_delay", mapUpdateDelay, 1);
-	pn.param<float>("map_update_distance", mapUpdateDistance, 0.5);
-	pn.param<float>("map_publish_rate", mapPublishRate, 10);
-	pn.param<float>("map_tf_publish_rate", mapTfPublishRate, 10);
-	pn.param<float>("max_idle_time", maxIdleTime, 10);
-	pn.param<float>("min_dist_new_point", minDistNewPoint, 0.03);
-	pn.param<float>("sensor_max_range", sensorMaxRange, 80);
-	pn.param<float>("prior_dynamic", priorDynamic, 0.6);
-	pn.param<float>("threshold_dynamic", thresholdDynamic, 0.9);
-	pn.param<float>("beam_half_angle", beamHalfAngle, 0.01);
-	pn.param<float>("epsilon_a", epsilonA, 0.01);
-	pn.param<float>("epsilon_d", epsilonD, 0.01);
-	pn.param<float>("alpha", alpha, 0.8);
-	pn.param<float>("beta", beta, 0.99);
-	pn.param<bool>("is_3D", is3D, true);
-	pn.param<bool>("is_online", isOnline, true);
-	pn.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
-	pn.param<bool>("is_mapping", isMapping, true);
-}
-
-void validateParameters()
-{
-	if(!initialMapFileName.empty())
-	{
-		std::ifstream ifs(initialMapFileName.c_str());
-		if(!ifs.good())
-		{
-			throw std::runtime_error("Invalid initial map file: " + initialMapFileName);
-		}
-		ifs.close();
-	}
-	
-	if(!isOnline)
-	{
-		std::ofstream ofs(finalMapFileName.c_str(), std::ios_base::app);
-		if(!ofs.good())
-		{
-			throw std::runtime_error("Invalid final map file: " + finalMapFileName);
-		}
-		ofs.close();
-	}
-	
-	if(!icpConfig.empty())
-	{
-		std::ifstream ifs(icpConfig.c_str());
-		if(!ifs.good())
-		{
-			throw std::runtime_error("Invalid icp config file: " + icpConfig);
-		}
-		ifs.close();
-	}
-	
-	if(!inputFiltersConfig.empty())
-	{
-		std::ifstream ifs(inputFiltersConfig.c_str());
-		if(!ifs.good())
-		{
-			throw std::runtime_error("Invalid input filters config file: " + inputFiltersConfig);
-		}
-		ifs.close();
-	}
-	
-	if(!mapPostFiltersConfig.empty())
-	{
-		std::ifstream ifs(mapPostFiltersConfig.c_str());
-		if(!ifs.good())
-		{
-			throw std::runtime_error("Invalid map post filters config file: " + mapPostFiltersConfig);
-		}
-		ifs.close();
-	}
-	
-	if(mapUpdateCondition != "overlap" && mapUpdateCondition != "delay" && mapUpdateCondition != "distance")
-	{
-		throw std::runtime_error("Invalid map update condition: " + mapUpdateCondition);
-	}
-	
-	if(mapUpdateOverlap < 0 || mapUpdateOverlap > 1)
-	{
-		throw std::runtime_error("Invalid map update overlap: " + std::to_string(mapUpdateOverlap));
-	}
-	
-	if(mapUpdateDelay < 0)
-	{
-		throw std::runtime_error("Invalid map update delay: " + std::to_string(mapUpdateDelay));
-	}
-	
-	if(mapUpdateDistance < 0)
-	{
-		throw std::runtime_error("Invalid map update distance: " + std::to_string(mapUpdateDistance));
-	}
-	
-	if(mapPublishRate <= 0)
-	{
-		throw std::runtime_error("Invalid map publish rate: " + std::to_string(mapPublishRate));
-	}
-	
-	if(mapTfPublishRate <= 0)
-	{
-		throw std::runtime_error("Invalid map tf publish rate: " + std::to_string(mapTfPublishRate));
-	}
-	
-	if(!isOnline)
-	{
-		if(maxIdleTime < 0)
-		{
-			throw std::runtime_error("Invalid max idle time: " + std::to_string(maxIdleTime));
-		}
-	}
-	
-	if(minDistNewPoint < 0)
-	{
-		throw std::runtime_error("Invalid minimum distance of new point: " + std::to_string(minDistNewPoint));
-	}
-	
-	if(sensorMaxRange < 0)
-	{
-		throw std::runtime_error("Invalid sensor max range: " + std::to_string(sensorMaxRange));
-	}
-	
-	if(priorDynamic < 0 || priorDynamic > 1)
-	{
-		throw std::runtime_error("Invalid prior dynamic: " + std::to_string(priorDynamic));
-	}
-	
-	if(thresholdDynamic < 0 || thresholdDynamic > 1)
-	{
-		throw std::runtime_error("Invalid threshold dynamic: " + std::to_string(thresholdDynamic));
-	}
-	
-	if(beamHalfAngle < 0 || beamHalfAngle > M_PI_2)
-	{
-		throw std::runtime_error("Invalid beam half angle: " + std::to_string(beamHalfAngle));
-	}
-	
-	if(epsilonA < 0)
-	{
-		throw std::runtime_error("Invalid epsilon a: " + std::to_string(epsilonA));
-	}
-	
-	if(epsilonD < 0)
-	{
-		throw std::runtime_error("Invalid epsilon d: " + std::to_string(epsilonD));
-	}
-	
-	if(alpha < 0 || alpha > 1)
-	{
-		throw std::runtime_error("Invalid alpha: " + std::to_string(alpha));
-	}
-	
-	if(beta < 0 || beta > 1)
-	{
-		throw std::runtime_error("Invalid beta: " + std::to_string(beta));
-	}
-	
-	if(!isMapping && initialMapFileName.empty())
-	{
-		throw std::runtime_error("is mapping is set to false, but initial map file name was not specified.");
-	}
-}
-
-PM::TransformationParameters parseInitialMapPose()
-{
-	int nbRows = is3D ? 4 : 3;
-	
-	PM::TransformationParameters parsedPose = PM::TransformationParameters::Identity(nbRows, nbRows);
-	
-	initialMapPose.erase(std::remove(initialMapPose.begin(), initialMapPose.end(), '['), initialMapPose.end());
-	initialMapPose.erase(std::remove(initialMapPose.begin(), initialMapPose.end(), ']'), initialMapPose.end());
-	std::replace(initialMapPose.begin(), initialMapPose.end(), ',', ' ');
-	std::replace(initialMapPose.begin(), initialMapPose.end(), ';', ' ');
-	
-	float poseMatrix[nbRows * nbRows];
-	std::stringstream poseStringStream(initialMapPose);
-	for(int i = 0; i < nbRows * nbRows; i++)
-	{
-		if(!(poseStringStream >> poseMatrix[i]))
-		{
-			throw std::runtime_error("An error occurred while trying to parse the initial map pose.");
-		}
-	}
-	
-	float extraOutput = 0;
-	if((poseStringStream >> extraOutput))
-	{
-		throw std::runtime_error("Wrong initial pose matrix size.");
-	}
-	
-	for(int i = 0; i < nbRows * nbRows; i++)
-	{
-		parsedPose(i / nbRows, i % nbRows) = poseMatrix[i];
-	}
-	
-	return parsedPose;
-}
-
 void loadInitialMap()
 {
-	if(!initialMapFileName.empty())
+	if(!params->initialMapFileName.empty())
 	{
-		PM::DataPoints initialMap = PM::DataPoints::load(initialMapFileName);
-		PM::TransformationParameters initialMapTransformation = parseInitialMapPose();
-		initialMap = transformation->compute(initialMap, initialMapTransformation);
+		PM::DataPoints initialMap = PM::DataPoints::load(params->initialMapFileName);
+		initialMap = transformation->compute(initialMap, params->initialMapPose);
 		mapper->setMap(initialMap);
 	}
 }
@@ -291,9 +52,9 @@ void mapperShutdownLoop()
 		}
 		idleTimeLock.unlock();
 		
-		if(idleTime > std::chrono::duration<float>(maxIdleTime))
+		if(idleTime > std::chrono::duration<float>(params->maxIdleTime))
 		{
-			saveMap(finalMapFileName);
+			saveMap(params->finalMapFileName);
 			ROS_INFO("Shutting down ROS");
 			ros::shutdown();
 		}
@@ -306,9 +67,9 @@ void gotPointMatcherCloud(PM::DataPoints cloud, ros::Time timeStamp)
 {
 	try
 	{
-		int nbRows = is3D ? 4 : 3;
+		int nbRows = params->is3D ? 4 : 3;
 		
-		geometry_msgs::TransformStamped sensorToOdomTf = tfBuffer->lookupTransform(odomFrame, sensorFrame, timeStamp, ros::Duration(0.1));
+		geometry_msgs::TransformStamped sensorToOdomTf = tfBuffer->lookupTransform(params->odomFrame, params->sensorFrame, timeStamp, ros::Duration(0.1));
 		PM::TransformationParameters sensorToOdom = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(sensorToOdomTf, nbRows);
 		
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
@@ -319,7 +80,7 @@ void gotPointMatcherCloud(PM::DataPoints cloud, ros::Time timeStamp)
 		odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
 		mapTfLock.unlock();
 		
-		geometry_msgs::TransformStamped robotToSensorTf = tfBuffer->lookupTransform(sensorFrame, robotFrame, timeStamp, ros::Duration(0.1));
+		geometry_msgs::TransformStamped robotToSensorTf = tfBuffer->lookupTransform(params->sensorFrame, params->robotFrame, timeStamp, ros::Duration(0.1));
 		PM::TransformationParameters robotToSensor = PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(robotToSensorTf, nbRows);
 		
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
@@ -363,7 +124,7 @@ bool saveMapCallback(map_msgs::SaveMap::Request& req, map_msgs::SaveMap::Respons
 
 void mapPublisherLoop()
 {
-	ros::Rate publishRate(mapPublishRate);
+	ros::Rate publishRate(params->mapPublishRate);
 	
 	PM::DataPoints newMap;
 	while(ros::ok())
@@ -380,7 +141,7 @@ void mapPublisherLoop()
 
 void mapTfPublisherLoop()
 {
-	ros::Rate publishRate(mapTfPublishRate);
+	ros::Rate publishRate(params->mapTfPublishRate);
 	
 	while(ros::ok())
 	{
@@ -388,7 +149,7 @@ void mapTfPublisherLoop()
 		PM::TransformationParameters currentOdomToMap = odomToMap;
 		mapTfLock.unlock();
 		
-		geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<T>(currentOdomToMap, "map", odomFrame,
+		geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<T>(currentOdomToMap, "map", params->odomFrame,
 																													ros::Time::now());
 		tfBroadcaster->sendTransform(currentOdomToMapTf);
 		
@@ -402,20 +163,21 @@ int main(int argc, char** argv)
 	ros::NodeHandle n;
 	ros::NodeHandle pn("~");
 	
-	retrieveParameters(pn);
-	validateParameters();
+	params = std::unique_ptr<NodeParameters>(new NodeParameters(pn));
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<Mapper>(new Mapper(icpConfig, inputFiltersConfig, mapPostFiltersConfig, mapUpdateCondition, mapUpdateOverlap, mapUpdateDelay,
-												mapUpdateDistance, minDistNewPoint, sensorMaxRange, priorDynamic, thresholdDynamic, beamHalfAngle, epsilonA,
-												epsilonD, alpha, beta, is3D, isOnline, computeProbDynamic, isMapping));
+	mapper = std::unique_ptr<Mapper>(new Mapper(params->icpConfig, params->inputFiltersConfig, params->mapPostFiltersConfig, params->mapUpdateCondition,
+												params->mapUpdateOverlap, params->mapUpdateDelay, params->mapUpdateDistance, params->minDistNewPoint,
+												params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
+												params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
+												params->isMapping));
 	
 	loadInitialMap();
 	
 	std::thread mapperShutdownThread;
 	int messageQueueSize;
-	if(isOnline)
+	if(params->isOnline)
 	{
 		tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer);
 		messageQueueSize = 1;
@@ -429,7 +191,7 @@ int main(int argc, char** argv)
 	tf2_ros::TransformListener tfListener(*tfBuffer);
 	tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
 	
-	if(is3D)
+	if(params->is3D)
 	{
 		sub = n.subscribe("points_in", messageQueueSize, gotCloud);
 		odomToMap = PM::Matrix::Identity(4, 4);
@@ -451,7 +213,7 @@ int main(int argc, char** argv)
 	
 	mapPublisherThread.join();
 	mapTfPublisherThread.join();
-	if(!isOnline)
+	if(!params->isOnline)
 	{
 		mapperShutdownThread.join();
 	}

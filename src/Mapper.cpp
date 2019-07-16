@@ -69,9 +69,7 @@ void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::Transfor
 	radiusFilter->inPlaceFilter(inputInSensorFrame);
 	PM::DataPoints inputInMapFrame = transformation->compute(inputInSensorFrame, estimatedSensorPose);
 	
-	mapLock.lock();
-	PM::DataPoints currentMap = map;
-	mapLock.unlock();
+	PM::DataPoints currentMap = getMap();
 	
 	if(currentMap.getNbPoints() == 0)
 	{
@@ -131,9 +129,7 @@ bool Mapper::shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_c
 
 void Mapper::updateMap(const PM::DataPoints& currentInput, const std::chrono::time_point<std::chrono::steady_clock>& timeStamp)
 {
-	mapLock.lock();
-	PM::DataPoints currentMap = map;
-	mapLock.unlock();
+	PM::DataPoints currentMap = getMap();
 	
 	lastTimeMapWasUpdated = timeStamp;
 	lastSensorPoseWhereMapWasUpdated = sensorPose;
@@ -332,11 +328,8 @@ void Mapper::convertToSphericalCoordinates(const PM::DataPoints& points, PM::Mat
 
 PM::DataPoints Mapper::getMap()
 {
-	mapLock.lock();
-	PM::DataPoints currentMap = map;
-	mapLock.unlock();
-	
-	return currentMap;
+	std::lock_guard<std::mutex> lock(mapLock);
+	return map;
 }
 
 void Mapper::setMap(const PM::DataPoints& newMap)

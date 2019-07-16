@@ -40,14 +40,14 @@ private:
 	bool shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_clock>& currentTime, const PM::TransformationParameters& currentSensorPose,
 						 const float& currentOverlap);
 	
-	void updateMap(const PM::DataPoints& currentCloud, const std::chrono::time_point<std::chrono::steady_clock>& timeStamp);
+	void updateMap(const PM::DataPoints& currentInput, const std::chrono::time_point<std::chrono::steady_clock>& timeStamp);
 	
-	void buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM::TransformationParameters currentSensorPose);
+	void buildMap(PM::DataPoints currentInput, PM::DataPoints currentMap, PM::TransformationParameters currentSensorPose);
 	
-	PM::DataPoints retrievePointsFurtherThanMinDistNewPoint(const PM::DataPoints& currentCloud, const PM::DataPoints& currentMap,
+	PM::DataPoints retrievePointsFurtherThanMinDistNewPoint(const PM::DataPoints& currentInput, const PM::DataPoints& currentMap,
 															const PM::TransformationParameters& currentSensorPose);
 	
-	void computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& currentCloud, PM::DataPoints& currentMap,
+	void computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& currentInput, PM::DataPoints& currentMap,
 												const PM::TransformationParameters& currentSensorPose);
 	
 	void convertToSphericalCoordinates(const PM::DataPoints& points, PM::Matrix& radii, PM::Matrix& angles);
@@ -58,7 +58,7 @@ public:
 		   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
 		   bool is3D, bool isOnline, bool computeProbDynamic, bool isMapping);
 	
-	void processCloud(PM::DataPoints& cloudInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
+	void processInput(PM::DataPoints& inputInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
 					  const std::chrono::time_point<std::chrono::steady_clock>& timeStamp);
 	
 	PM::DataPoints getMap();

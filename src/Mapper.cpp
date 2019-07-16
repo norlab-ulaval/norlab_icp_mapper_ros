@@ -62,12 +62,12 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 	sensorPose = PM::Matrix::Identity(homogeneousDim, homogeneousDim);
 }
 
-void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
+void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
 						  const std::chrono::time_point<std::chrono::steady_clock>& timeStamp)
 {
-	inputFilters.apply(cloudInSensorFrame);
-	radiusFilter->inPlaceFilter(cloudInSensorFrame);
-	PM::DataPoints cloudInMapFrame = transformation->compute(cloudInSensorFrame, estimatedSensorPose);
+	inputFilters.apply(inputInSensorFrame);
+	radiusFilter->inPlaceFilter(inputInSensorFrame);
+	PM::DataPoints inputInMapFrame = transformation->compute(inputInSensorFrame, estimatedSensorPose);
 	
 	mapLock.lock();
 	PM::DataPoints currentMap = map;
@@ -77,7 +77,7 @@ void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, const PM::Transfor
 	{
 		sensorPose = estimatedSensorPose;
 		
-		updateMap(cloudInMapFrame, timeStamp);
+		updateMap(inputInMapFrame, timeStamp);
 	}
 	else
 	{
@@ -85,12 +85,12 @@ void Mapper::processCloud(PM::DataPoints& cloudInSensorFrame, const PM::Transfor
 		radiusFilter->inPlaceFilter(cutMapInSensorFrame);
 		PM::DataPoints cutMap = transformation->compute(cutMapInSensorFrame, estimatedSensorPose);
 		
-		PM::TransformationParameters correction = icp(cloudInMapFrame, cutMap);
+		PM::TransformationParameters correction = icp(inputInMapFrame, cutMap);
 		sensorPose = correction * estimatedSensorPose;
 		
 		if(shouldUpdateMap(timeStamp, sensorPose, icp.errorMinimizer->getOverlap()))
 		{
-			updateMap(transformation->compute(cloudInMapFrame, correction), timeStamp);
+			updateMap(transformation->compute(inputInMapFrame, correction), timeStamp);
 		}
 	}
 }
@@ -129,7 +129,7 @@ bool Mapper::shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_c
 	}
 }
 
-void Mapper::updateMap(const PM::DataPoints& currentCloud, const std::chrono::time_point<std::chrono::steady_clock>& timeStamp)
+void Mapper::updateMap(const PM::DataPoints& currentInput, const std::chrono::time_point<std::chrono::steady_clock>& timeStamp)
 {
 	mapLock.lock();
 	PM::DataPoints currentMap = map;
@@ -140,34 +140,34 @@ void Mapper::updateMap(const PM::DataPoints& currentCloud, const std::chrono::ti
 	
 	if(isOnline && currentMap.getNbPoints() != 0)
 	{
-		mapBuilderFuture = std::async(&Mapper::buildMap, this, currentCloud, currentMap, sensorPose);
+		mapBuilderFuture = std::async(&Mapper::buildMap, this, currentInput, currentMap, sensorPose);
 	}
 	else
 	{
-		buildMap(currentCloud, currentMap, sensorPose);
+		buildMap(currentInput, currentMap, sensorPose);
 	}
 }
 
-void Mapper::buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM::TransformationParameters currentSensorPose)
+void Mapper::buildMap(PM::DataPoints currentInput, PM::DataPoints currentMap, PM::TransformationParameters currentSensorPose)
 {
 	if(computeProbDynamic)
 	{
-		currentCloud.addDescriptor("probabilityDynamic", PM::Matrix::Constant(1, currentCloud.features.cols(), priorDynamic));
+		currentInput.addDescriptor("probabilityDynamic", PM::Matrix::Constant(1, currentInput.features.cols(), priorDynamic));
 	}
 	
 	if(currentMap.getNbPoints() == 0)
 	{
-		currentMap = currentCloud;
+		currentMap = currentInput;
 	}
 	else
 	{
 		if(computeProbDynamic)
 		{
-			computeProbabilityOfPointsBeingDynamic(currentCloud, currentMap, currentSensorPose);
+			computeProbabilityOfPointsBeingDynamic(currentInput, currentMap, currentSensorPose);
 		}
 		
-		PM::DataPoints cloudPointsToKeep = retrievePointsFurtherThanMinDistNewPoint(currentCloud, currentMap, currentSensorPose);
-		currentMap.concatenate(cloudPointsToKeep);
+		PM::DataPoints inputPointsToKeep = retrievePointsFurtherThanMinDistNewPoint(currentInput, currentMap, currentSensorPose);
+		currentMap.concatenate(inputPointsToKeep);
 	}
 	
 	PM::DataPoints mapInSensorFrame = transformation->compute(currentMap, currentSensorPose.inverse());
@@ -177,17 +177,17 @@ void Mapper::buildMap(PM::DataPoints currentCloud, PM::DataPoints currentMap, PM
 	setMap(currentMap);
 }
 
-void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& currentCloud, PM::DataPoints& currentMap,
+void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& currentInput, PM::DataPoints& currentMap,
 													const PM::TransformationParameters& currentSensorPose)
 {
 	typedef Nabo::NearestNeighbourSearch<T> NNS;
 	const float eps = 0.0001;
 	
-	PM::DataPoints currentCloudInSensorFrame = transformation->compute(currentCloud, currentSensorPose.inverse());
+	PM::DataPoints currentInputInSensorFrame = transformation->compute(currentInput, currentSensorPose.inverse());
 	
-	PM::Matrix currentCloudInSensorFrameRadii;
-	PM::Matrix currentCloudInSensorFrameAngles;
-	convertToSphericalCoordinates(currentCloudInSensorFrame, currentCloudInSensorFrameRadii, currentCloudInSensorFrameAngles);
+	PM::Matrix currentInputInSensorFrameRadii;
+	PM::Matrix currentInputInSensorFrameAngles;
+	convertToSphericalCoordinates(currentInputInSensorFrame, currentInputInSensorFrameRadii, currentInputInSensorFrameAngles);
 	
 	PM::DataPoints cutMapInSensorFrame = transformation->compute(currentMap, currentSensorPose.inverse());
 	PM::Matrix globalId(1, currentMap.getNbPoints());
@@ -207,7 +207,7 @@ void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& curren
 	PM::Matrix cutMapInSensorFrameAngles;
 	convertToSphericalCoordinates(cutMapInSensorFrame, cutMapInSensorFrameRadii, cutMapInSensorFrameAngles);
 	
-	std::shared_ptr<NNS> nns = std::shared_ptr<NNS>(NNS::create(currentCloudInSensorFrameAngles));
+	std::shared_ptr<NNS> nns = std::shared_ptr<NNS>(NNS::create(currentInputInSensorFrameAngles));
 	PM::Matches::Dists dists(1, cutMapInSensorFrame.getNbPoints());
 	PM::Matches::Ids ids(1, cutMapInSensorFrame.getNbPoints());
 	nns->knn(cutMapInSensorFrameAngles, ids, dists, 1, 0, NNS::ALLOW_SELF_MATCH, 2 * beamHalfAngle);
@@ -221,7 +221,7 @@ void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& curren
 			const int readingPointId = ids(0, i);
 			const int mapPointId = globalId(0, i);
 			
-			const Eigen::VectorXf readingPoint = currentCloudInSensorFrame.features.col(readingPointId).head(currentCloudInSensorFrame.getEuclideanDim());
+			const Eigen::VectorXf readingPoint = currentInputInSensorFrame.features.col(readingPointId).head(currentInputInSensorFrame.getEuclideanDim());
 			const Eigen::VectorXf mapPoint = cutMapInSensorFrame.features.col(i).head(cutMapInSensorFrame.getEuclideanDim());
 			const float delta = (readingPoint - mapPoint).norm();
 			const float d_max = epsilonA * readingPoint.norm();
@@ -284,7 +284,7 @@ void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& curren
 	}
 }
 
-PM::DataPoints Mapper::retrievePointsFurtherThanMinDistNewPoint(const PM::DataPoints& currentCloud, const PM::DataPoints& currentMap,
+PM::DataPoints Mapper::retrievePointsFurtherThanMinDistNewPoint(const PM::DataPoints& currentInput, const PM::DataPoints& currentMap,
 																const PM::TransformationParameters& currentSensorPose)
 {
 	typedef Nabo::NearestNeighbourSearch<T> NNS;
@@ -293,18 +293,18 @@ PM::DataPoints Mapper::retrievePointsFurtherThanMinDistNewPoint(const PM::DataPo
 	radiusFilter->inPlaceFilter(cutMapInSensorFrame);
 	PM::DataPoints cutMap = transformation->compute(cutMapInSensorFrame, currentSensorPose);
 	
-	PM::Matches matches(PM::Matches::Dists(1, currentCloud.getNbPoints()), PM::Matches::Ids(1, currentCloud.getNbPoints()));
+	PM::Matches matches(PM::Matches::Dists(1, currentInput.getNbPoints()), PM::Matches::Ids(1, currentInput.getNbPoints()));
 	std::shared_ptr<NNS> nns = std::shared_ptr<NNS>(NNS::create(cutMap.features, cutMap.features.rows() - 1, NNS::KDTREE_LINEAR_HEAP, NNS::TOUCH_STATISTICS));
 	
-	nns->knn(currentCloud.features, matches.ids, matches.dists, 1, 0);
+	nns->knn(currentInput.features, matches.ids, matches.dists, 1, 0);
 	
 	int goodPointCount = 0;
-	PM::DataPoints goodPoints(currentCloud.createSimilarEmpty());
-	for(int i = 0; i < currentCloud.getNbPoints(); ++i)
+	PM::DataPoints goodPoints(currentInput.createSimilarEmpty());
+	for(int i = 0; i < currentInput.getNbPoints(); ++i)
 	{
 		if(matches.dists(i) >= std::pow(minDistNewPoint, 2))
 		{
-			goodPoints.setColFrom(goodPointCount, currentCloud, i);
+			goodPoints.setColFrom(goodPointCount, currentInput, i);
 			goodPointCount++;
 		}
 	}

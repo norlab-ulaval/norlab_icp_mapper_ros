@@ -20,7 +20,7 @@ ros::ServiceServer saveMapService;
 std::unique_ptr<tf2_ros::Buffer> tfBuffer;
 std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
-std::chrono::time_point<std::chrono::steady_clock> lastTimeCloudWasProcessed;
+std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;
 std::mutex idleTimeLock;
 
 void loadInitialMap()
@@ -53,9 +53,9 @@ void mapperShutdownLoop()
 	while(ros::ok())
 	{
 		idleTimeLock.lock();
-		if(lastTimeCloudWasProcessed.time_since_epoch().count())
+		if(lastTimeInputWasProcessed.time_since_epoch().count())
 		{
-			idleTime = std::chrono::steady_clock::now() - lastTimeCloudWasProcessed;
+			idleTime = std::chrono::steady_clock::now() - lastTimeInputWasProcessed;
 		}
 		idleTimeLock.unlock();
 		
@@ -76,28 +76,28 @@ PM::TransformationParameters findTransform(std::string sourceFrame, std::string 
 	return PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(tf, transformDimension);
 }
 
-void gotCloud(PM::DataPoints cloud, ros::Time timeStamp)
+void gotInput(PM::DataPoints input, ros::Time timeStamp)
 {
 	try
 	{
-		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, cloud.getHomogeneousDim());
+		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		
-		mapper->processCloud(cloud, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+		mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
 		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
 		
 		mapTfLock.lock();
 		odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
 		mapTfLock.unlock();
 		
-		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, params->sensorFrame, timeStamp, cloud.getHomogeneousDim());
+		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, params->sensorFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 		
 		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", timeStamp);
 		odomPublisher.publish(odomMsgOut);
 		
 		idleTimeLock.lock();
-		lastTimeCloudWasProcessed = std::chrono::steady_clock::now();
+		lastTimeInputWasProcessed = std::chrono::steady_clock::now();
 		idleTimeLock.unlock();
 	}
 	catch(tf2::TransformException& ex)
@@ -109,12 +109,12 @@ void gotCloud(PM::DataPoints cloud, ros::Time timeStamp)
 
 void pointCloud2Callback(const sensor_msgs::PointCloud2& cloudMsgIn)
 {
-	gotCloud(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(cloudMsgIn), cloudMsgIn.header.stamp);
+	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(cloudMsgIn), cloudMsgIn.header.stamp);
 }
 
 void laserScanCallback(const sensor_msgs::LaserScan& scanMsgIn)
 {
-	gotCloud(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(scanMsgIn), scanMsgIn.header.stamp);
+	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(scanMsgIn), scanMsgIn.header.stamp);
 }
 
 bool saveMapCallback(map_msgs::SaveMap::Request& req, map_msgs::SaveMap::Response& res)

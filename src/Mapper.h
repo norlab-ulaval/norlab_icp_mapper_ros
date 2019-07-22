@@ -9,7 +9,7 @@ class Mapper
 private:
 	PM::DataPointsFilters inputFilters;
 	PM::DataPointsFilters mapPostFilters;
-	PM::ICP icp;
+	PM::ICPSequence icp;
 	PM::DataPoints map;
 	PM::TransformationParameters sensorPose;
 	std::shared_ptr<PM::Transformation> transformation;
@@ -34,7 +34,9 @@ private:
 	bool computeProbDynamic;
 	bool isMapping;
 	bool newMapAvailable;
+	std::atomic_bool isMapEmpty;
 	std::mutex mapLock;
+	std::mutex icpMapLock;
 	std::future<void> mapBuilderFuture;
 	
 	bool shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_clock>& currentTime, const PM::TransformationParameters& currentSensorPose,
@@ -63,7 +65,7 @@ public:
 	
 	PM::DataPoints getMap();
 	
-	void setMap(const PM::DataPoints& newMap);
+	void setMap(const PM::DataPoints& newMap, const PM::TransformationParameters& newSensorPose);
 	
 	bool getNewMap(PM::DataPoints& mapOut);
 	

@@ -25,7 +25,8 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 		isOnline(isOnline),
 		computeProbDynamic(computeProbDynamic),
 		isMapping(isMapping),
-		newMapAvailable(false)
+		newMapAvailable(false),
+		isMapEmpty(true)
 {
 	if(!icpConfigFilePath.empty())
 	{
@@ -69,9 +70,7 @@ void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::Transfor
 	radiusFilter->inPlaceFilter(inputInSensorFrame);
 	PM::DataPoints inputInMapFrame = transformation->compute(inputInSensorFrame, estimatedSensorPose);
 	
-	PM::DataPoints currentMap = getMap();
-	
-	if(currentMap.getNbPoints() == 0)
+	if(isMapEmpty)
 	{
 		sensorPose = estimatedSensorPose;
 		
@@ -79,11 +78,10 @@ void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::Transfor
 	}
 	else
 	{
-		PM::DataPoints cutMapInSensorFrame = transformation->compute(currentMap, estimatedSensorPose.inverse());
-		radiusFilter->inPlaceFilter(cutMapInSensorFrame);
-		PM::DataPoints cutMap = transformation->compute(cutMapInSensorFrame, estimatedSensorPose);
+		icpMapLock.lock();
+		PM::TransformationParameters correction = icp(inputInMapFrame);
+		icpMapLock.unlock();
 		
-		PM::TransformationParameters correction = icp(inputInMapFrame, cutMap);
 		sensorPose = correction * estimatedSensorPose;
 		
 		if(shouldUpdateMap(timeStamp, sensorPose, icp.errorMinimizer->getOverlap()))
@@ -129,18 +127,16 @@ bool Mapper::shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_c
 
 void Mapper::updateMap(const PM::DataPoints& currentInput, const std::chrono::time_point<std::chrono::steady_clock>& timeStamp)
 {
-	PM::DataPoints currentMap = getMap();
-	
 	lastTimeMapWasUpdated = timeStamp;
 	lastSensorPoseWhereMapWasUpdated = sensorPose;
 	
-	if(isOnline && currentMap.getNbPoints() != 0)
+	if(isOnline && !isMapEmpty)
 	{
-		mapBuilderFuture = std::async(&Mapper::buildMap, this, currentInput, currentMap, sensorPose);
+		mapBuilderFuture = std::async(&Mapper::buildMap, this, currentInput, getMap(), sensorPose);
 	}
 	else
 	{
-		buildMap(currentInput, currentMap, sensorPose);
+		buildMap(currentInput, getMap(), sensorPose);
 	}
 }
 
@@ -151,7 +147,7 @@ void Mapper::buildMap(PM::DataPoints currentInput, PM::DataPoints currentMap, PM
 		currentInput.addDescriptor("probabilityDynamic", PM::Matrix::Constant(1, currentInput.features.cols(), priorDynamic));
 	}
 	
-	if(currentMap.getNbPoints() == 0)
+	if(isMapEmpty)
 	{
 		currentMap = currentInput;
 	}
@@ -170,7 +166,7 @@ void Mapper::buildMap(PM::DataPoints currentInput, PM::DataPoints currentMap, PM
 	mapPostFilters.apply(mapInSensorFrame);                                              // TODO: find efficient way to compute this...
 	currentMap = transformation->compute(mapInSensorFrame, currentSensorPose);
 	
-	setMap(currentMap);
+	setMap(currentMap, currentSensorPose);
 }
 
 void Mapper::computeProbabilityOfPointsBeingDynamic(const PM::DataPoints& currentInput, PM::DataPoints& currentMap,
@@ -332,17 +328,27 @@ PM::DataPoints Mapper::getMap()
 	return map;
 }
 
-void Mapper::setMap(const PM::DataPoints& newMap)
+void Mapper::setMap(const PM::DataPoints& newMap, const PM::TransformationParameters& newSensorPose)
 {
 	if(computeProbDynamic && !newMap.descriptorExists("normals"))
 	{
 		throw std::runtime_error("compute prob dynamic is set to true, but field normals does not exist for map points.");
 	}
 	
+	PM::DataPoints cutMapInSensorFrame = transformation->compute(newMap, newSensorPose.inverse());
+	radiusFilter->inPlaceFilter(cutMapInSensorFrame);
+	PM::DataPoints cutMap = transformation->compute(cutMapInSensorFrame, newSensorPose);
+	
+	icpMapLock.lock();
+	icp.setMap(cutMap);
+	icpMapLock.unlock();
+	
 	mapLock.lock();
 	map = newMap;
 	newMapAvailable = true;
 	mapLock.unlock();
+	
+	isMapEmpty = newMap.getNbPoints() == 0;
 }
 
 bool Mapper::getNewMap(PM::DataPoints& mapOut)

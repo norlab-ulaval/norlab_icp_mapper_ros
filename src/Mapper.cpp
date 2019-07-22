@@ -163,7 +163,7 @@ void Mapper::buildMap(PM::DataPoints currentInput, PM::DataPoints currentMap, PM
 	}
 	
 	PM::DataPoints mapInSensorFrame = transformation->compute(currentMap, currentSensorPose.inverse());
-	mapPostFilters.apply(mapInSensorFrame);                                              // TODO: find efficient way to compute this...
+	mapPostFilters.apply(mapInSensorFrame);
 	currentMap = transformation->compute(mapInSensorFrame, currentSensorPose);
 	
 	setMap(currentMap, currentSensorPose);

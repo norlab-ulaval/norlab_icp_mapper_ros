@@ -66,8 +66,8 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
 						  const std::chrono::time_point<std::chrono::steady_clock>& timeStamp)
 {
-	inputFilters.apply(inputInSensorFrame);
 	radiusFilter->inPlaceFilter(inputInSensorFrame);
+	inputFilters.apply(inputInSensorFrame);
 	PM::DataPoints inputInMapFrame = transformation->compute(inputInSensorFrame, estimatedSensorPose);
 	
 	if(isMapEmpty)

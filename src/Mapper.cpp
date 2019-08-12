@@ -6,7 +6,7 @@
 Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFilePath, std::string mapPostFiltersConfigFilePath, std::string mapUpdateCondition,
 			   float mapUpdateOverlap, float mapUpdateDelay, float mapUpdateDistance, float minDistNewPoint, float sensorMaxRange,
 			   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
-			   bool is3D, bool isOnline, bool computeProbDynamic, bool isMapping):
+			   bool is3D, bool isOnline, bool computeProbDynamic, bool isMapping, std::chrono::time_point<std::chrono::steady_clock> startTime):
 		transformation(PM::get().TransformationRegistrar.create("RigidTransformation")),
 		mapUpdateCondition(mapUpdateCondition),
 		mapUpdateOverlap(mapUpdateOverlap),
@@ -26,7 +26,8 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 		computeProbDynamic(computeProbDynamic),
 		isMapping(isMapping),
 		newMapAvailable(false),
-		isMapEmpty(true)
+		isMapEmpty(true),
+		startTime(startTime)
 {
 	if(!icpConfigFilePath.empty())
 	{
@@ -74,6 +75,11 @@ void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::Transfor
 	{
 		sensorPose = estimatedSensorPose;
 		
+		double yaw = std::atan2(sensorPose(1, 0), sensorPose(0, 0));
+		sensorPose.topLeftCorner(3, 3) << std::cos(yaw), -std::sin(yaw), 0,
+				std::sin(yaw), std::cos(yaw), 0,
+				0, 0, 1;
+		
 		updateMap(inputInMapFrame, timeStamp);
 	}
 	else
@@ -83,6 +89,14 @@ void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::Transfor
 		icpMapLock.unlock();
 		
 		sensorPose = correction * estimatedSensorPose;
+		
+		if((timeStamp - startTime) < std::chrono::duration<float>(5))
+		{
+			double yaw = std::atan2(sensorPose(1, 0), sensorPose(0, 0));
+			sensorPose.topLeftCorner(3, 3) << std::cos(yaw), -std::sin(yaw), 0,
+					std::sin(yaw), std::cos(yaw), 0,
+					0, 0, 1;
+		}
 		
 		if(shouldUpdateMap(timeStamp, sensorPose, icp.errorMinimizer->getOverlap()))
 		{

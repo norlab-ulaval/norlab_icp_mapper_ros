@@ -38,6 +38,7 @@ private:
 	std::mutex mapLock;
 	std::mutex icpMapLock;
 	std::future<void> mapBuilderFuture;
+	std::chrono::time_point<std::chrono::steady_clock> startTime;
 	
 	bool shouldUpdateMap(const std::chrono::time_point<std::chrono::steady_clock>& currentTime, const PM::TransformationParameters& currentSensorPose,
 						 const float& currentOverlap);
@@ -58,7 +59,7 @@ public:
 	Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFilePath, std::string mapPostFiltersConfigFilePath, std::string mapUpdateCondition,
 		   float mapUpdateOverlap, float mapUpdateDelay, float mapUpdateDistance, float minDistNewPoint, float sensorMaxRange,
 		   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
-		   bool is3D, bool isOnline, bool computeProbDynamic, bool isMapping);
+		   bool is3D, bool isOnline, bool computeProbDynamic, bool isMapping, std::chrono::time_point<std::chrono::steady_clock> startTime);
 	
 	void processInput(PM::DataPoints& inputInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
 					  const std::chrono::time_point<std::chrono::steady_clock>& timeStamp);

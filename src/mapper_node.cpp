@@ -176,11 +176,14 @@ int main(int argc, char** argv)
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
+	while(ros::Time::now().is_zero()); // wait until ROS clock is ready
+	
+	std::chrono::time_point<std::chrono::steady_clock> startTime(std::chrono::nanoseconds(ros::Time::now().toNSec()));
 	mapper = std::unique_ptr<Mapper>(new Mapper(params->icpConfig, params->inputFiltersConfig, params->mapPostFiltersConfig, params->mapUpdateCondition,
 												params->mapUpdateOverlap, params->mapUpdateDelay, params->mapUpdateDistance, params->minDistNewPoint,
 												params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
 												params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
-												params->isMapping));
+												params->isMapping, startTime));
 	
 	loadInitialMap();
 	

@@ -92,10 +92,11 @@ void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::Transfor
 		
 		if((timeStamp - startTime) < std::chrono::duration<float>(5))
 		{
+			double pitch = 15 * M_PI / 180.0;
 			double yaw = std::atan2(sensorPose(1, 0), sensorPose(0, 0));
-			sensorPose.topLeftCorner(3, 3) << std::cos(yaw), -std::sin(yaw), 0,
+			sensorPose.topLeftCorner(3, 3) << std::cos(pitch) * std::cos(yaw), -std::cos(pitch) * std::sin(yaw), std::sin(pitch),
 					std::sin(yaw), std::cos(yaw), 0,
-					0, 0, 1;
+					-std::sin(pitch) * std::cos(yaw), std::sin(pitch) * std::sin(yaw), std::cos(pitch);
 		}
 		
 		if(shouldUpdateMap(timeStamp, sensorPose, icp.errorMinimizer->getOverlap()))

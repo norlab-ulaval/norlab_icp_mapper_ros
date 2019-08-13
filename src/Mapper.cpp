@@ -64,22 +64,50 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 	sensorPose = PM::Matrix::Identity(homogeneousDim, homogeneousDim);
 }
 
-void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
+const float force2dDuration = 30;
+
+Eigen::Matrix4f getRollCorrection(const PM::TransformationParameters& transformationMatrix, const float& wantedRoll)
+{
+	float currentRoll = std::atan2(transformationMatrix(2, 1), transformationMatrix(2, 2));
+	Eigen::Matrix4f rollCorrection;
+	rollCorrection << 1, 0, 0, 0,
+			0, std::cos(wantedRoll - currentRoll), -std::sin(wantedRoll - currentRoll), 0,
+			0, std::sin(wantedRoll - currentRoll), std::cos(wantedRoll - currentRoll), 0,
+			0, 0, 0, 1;
+	return rollCorrection;
+}
+
+Eigen::Matrix4f getPitchCorrection(const PM::TransformationParameters& transformationMatrix, const float& wantedPitch)
+{
+	float currentPitch = std::atan2(-transformationMatrix(2, 0), std::sqrt(std::pow(transformationMatrix(2, 1), 2) + std::pow(transformationMatrix(2, 2), 2)));
+	Eigen::Matrix4f pitchCorrection;
+	pitchCorrection << std::cos(wantedPitch - currentPitch), 0, std::sin(wantedPitch - currentPitch), 0,
+			0, 1, 0, 0,
+			-std::sin(wantedPitch - currentPitch), 0, std::cos(wantedPitch - currentPitch), 0,
+			0, 0, 0, 1;
+	return pitchCorrection;
+}
+
+void Mapper::processInput(PM::DataPoints& inputInSensorFrame, PM::TransformationParameters estimatedSensorPose,
 						  const std::chrono::time_point<std::chrono::steady_clock>& timeStamp)
 {
 	radiusFilter->inPlaceFilter(inputInSensorFrame);
 	inputFilters.apply(inputInSensorFrame);
+	
+	if((timeStamp - startTime) < std::chrono::duration<float>(force2dDuration))
+	{
+		Eigen::Matrix4f rollCorrection = getRollCorrection(estimatedSensorPose, 0);
+		estimatedSensorPose = rollCorrection * estimatedSensorPose;
+		
+		Eigen::Matrix4f pitchCorrection = getPitchCorrection(estimatedSensorPose, 15 * M_PI / 180.0);
+		estimatedSensorPose = pitchCorrection * estimatedSensorPose;
+	}
+	
 	PM::DataPoints inputInMapFrame = transformation->compute(inputInSensorFrame, estimatedSensorPose);
 	
 	if(isMapEmpty)
 	{
 		sensorPose = estimatedSensorPose;
-		
-		double pitch = 15 * M_PI / 180.0;
-		double yaw = std::atan2(sensorPose(1, 0), sensorPose(0, 0));
-		sensorPose.topLeftCorner(3, 3) << std::cos(pitch) * std::cos(yaw), -std::cos(pitch) * std::sin(yaw), std::sin(pitch),
-				std::sin(yaw), std::cos(yaw), 0,
-				-std::sin(pitch) * std::cos(yaw), std::sin(pitch) * std::sin(yaw), std::cos(pitch);
 		
 		updateMap(inputInMapFrame, timeStamp);
 	}
@@ -89,16 +117,16 @@ void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::Transfor
 		PM::TransformationParameters correction = icp(inputInMapFrame);
 		icpMapLock.unlock();
 		
-		sensorPose = correction * estimatedSensorPose;
-		
-		if((timeStamp - startTime) < std::chrono::duration<float>(5))
+		if((timeStamp - startTime) < std::chrono::duration<float>(force2dDuration))
 		{
-			double pitch = 15 * M_PI / 180.0;
-			double yaw = std::atan2(sensorPose(1, 0), sensorPose(0, 0));
-			sensorPose.topLeftCorner(3, 3) << std::cos(pitch) * std::cos(yaw), -std::cos(pitch) * std::sin(yaw), std::sin(pitch),
-					std::sin(yaw), std::cos(yaw), 0,
-					-std::sin(pitch) * std::cos(yaw), std::sin(pitch) * std::sin(yaw), std::cos(pitch);
+			Eigen::Matrix4f rollCorrection = getRollCorrection(correction, 0);
+			correction = rollCorrection * correction;
+			
+			Eigen::Matrix4f pitchCorrection = getPitchCorrection(correction, 0);
+			correction = pitchCorrection * correction;
 		}
+		
+		sensorPose = correction * estimatedSensorPose;
 		
 		if(shouldUpdateMap(timeStamp, sensorPose, icp.errorMinimizer->getOverlap()))
 		{

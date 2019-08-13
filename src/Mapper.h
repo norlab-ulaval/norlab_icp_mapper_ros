@@ -61,7 +61,7 @@ public:
 		   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
 		   bool is3D, bool isOnline, bool computeProbDynamic, bool isMapping, std::chrono::time_point<std::chrono::steady_clock> startTime);
 	
-	void processInput(PM::DataPoints& inputInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
+	void processInput(PM::DataPoints& inputInSensorFrame, PM::TransformationParameters estimatedSensorPose,
 					  const std::chrono::time_point<std::chrono::steady_clock>& timeStamp);
 	
 	PM::DataPoints getMap();

@@ -4,6 +4,7 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
+#include <std_srvs/Empty.h>
 #include <map_msgs/SaveMap.h>
 #include <memory>
 #include <mutex>
@@ -16,6 +17,7 @@ PM::TransformationParameters odomToMap;
 ros::Subscriber sub;
 ros::Publisher mapPublisher;
 ros::Publisher odomPublisher;
+ros::ServiceServer reloadYamlConfigService;
 ros::ServiceServer saveMapService;
 std::unique_ptr<tf2_ros::Buffer> tfBuffer;
 std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
@@ -117,6 +119,12 @@ void laserScanCallback(const sensor_msgs::LaserScan& scanMsgIn)
 	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(scanMsgIn), scanMsgIn.header.stamp);
 }
 
+bool reloadYamlConfigCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+{
+	mapper->loadYamlConfig();
+	return true;
+}
+
 bool saveMapCallback(map_msgs::SaveMap::Request& req, map_msgs::SaveMap::Response& res)
 {
 	try
@@ -215,6 +223,7 @@ int main(int argc, char** argv)
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
 	
+	reloadYamlConfigService = n.advertiseService("reload_yaml_config", reloadYamlConfigCallback);
 	saveMapService = n.advertiseService("save_map", saveMapCallback);
 	
 	std::thread mapPublisherThread = std::thread(mapPublisherLoop);

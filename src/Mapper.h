@@ -16,6 +16,9 @@ private:
 	std::shared_ptr<PM::DataPointsFilter> radiusFilter;
 	std::chrono::time_point<std::chrono::steady_clock> lastTimeMapWasUpdated;
 	PM::TransformationParameters lastSensorPoseWhereMapWasUpdated;
+	std::string icpConfigFilePath;
+	std::string inputFiltersConfigFilePath;
+	std::string mapPostFiltersConfigFilePath;
 	std::string mapUpdateCondition;
 	float mapUpdateOverlap;
 	float mapUpdateDelay;
@@ -59,6 +62,8 @@ public:
 		   float mapUpdateOverlap, float mapUpdateDelay, float mapUpdateDistance, float minDistNewPoint, float sensorMaxRange,
 		   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
 		   bool is3D, bool isOnline, bool computeProbDynamic, bool isMapping);
+	
+	void loadYamlConfig();
 	
 	void processInput(PM::DataPoints& inputInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,
 					  const std::chrono::time_point<std::chrono::steady_clock>& timeStamp);

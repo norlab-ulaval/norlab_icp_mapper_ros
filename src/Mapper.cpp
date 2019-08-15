@@ -8,6 +8,9 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 			   float priorDynamic, float thresholdDynamic, float beamHalfAngle, float epsilonA, float epsilonD, float alpha, float beta,
 			   bool is3D, bool isOnline, bool computeProbDynamic, bool isMapping):
 		transformation(PM::get().TransformationRegistrar.create("RigidTransformation")),
+		icpConfigFilePath(icpConfigFilePath),
+		inputFiltersConfigFilePath(inputFiltersConfigFilePath),
+		mapPostFiltersConfigFilePath(mapPostFiltersConfigFilePath),
 		mapUpdateCondition(mapUpdateCondition),
 		mapUpdateOverlap(mapUpdateOverlap),
 		mapUpdateDelay(mapUpdateDelay),
@@ -27,6 +30,20 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 		isMapping(isMapping),
 		newMapAvailable(false),
 		isMapEmpty(true)
+{
+	loadYamlConfig();
+	
+	PM::Parameters radiusFilterParams;
+	radiusFilterParams["dim"] = "-1";
+	radiusFilterParams["dist"] = std::to_string(sensorMaxRange);
+	radiusFilterParams["removeInside"] = "0";
+	radiusFilter = PM::get().DataPointsFilterRegistrar.create("DistanceLimitDataPointsFilter", radiusFilterParams);
+	
+	int homogeneousDim = is3D ? 4 : 3;
+	sensorPose = PM::Matrix::Identity(homogeneousDim, homogeneousDim);
+}
+
+void Mapper::loadYamlConfig()
 {
 	if(!icpConfigFilePath.empty())
 	{
@@ -52,15 +69,6 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 		mapPostFilters = PM::DataPointsFilters(ifs);
 		ifs.close();
 	}
-	
-	PM::Parameters radiusFilterParams;
-	radiusFilterParams["dim"] = "-1";
-	radiusFilterParams["dist"] = std::to_string(sensorMaxRange);
-	radiusFilterParams["removeInside"] = "0";
-	radiusFilter = PM::get().DataPointsFilterRegistrar.create("DistanceLimitDataPointsFilter", radiusFilterParams);
-	
-	int homogeneousDim = is3D ? 4 : 3;
-	sensorPose = PM::Matrix::Identity(homogeneousDim, homogeneousDim);
 }
 
 void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::TransformationParameters& estimatedSensorPose,

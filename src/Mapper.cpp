@@ -38,7 +38,11 @@ Mapper::Mapper(std::string icpConfigFilePath, std::string inputFiltersConfigFile
 	radiusFilterParams["dist"] = std::to_string(sensorMaxRange);
 	radiusFilterParams["removeInside"] = "0";
 	radiusFilter = PM::get().DataPointsFilterRegistrar.create("DistanceLimitDataPointsFilter", radiusFilterParams);
-	
+
+	PM::Parameters densityFilterParams;
+	densityFilterParams["maxDensity"] = std::to_string(3.0 / 4.0 * M_PI * std::pow(minDistNewPoint, 3)); // rough approximation
+	densityFilter = PM::get().DataPointsFilterRegistrar.create("MaxDensityDataPointsFilter", densityFilterParams);
+
 	int homogeneousDim = is3D ? 4 : 3;
 	sensorPose = PM::Matrix::Identity(homogeneousDim, homogeneousDim);
 }
@@ -75,6 +79,7 @@ void Mapper::processInput(PM::DataPoints& inputInSensorFrame, const PM::Transfor
 						  const std::chrono::time_point<std::chrono::steady_clock>& timeStamp)
 {
 	radiusFilter->inPlaceFilter(inputInSensorFrame);
+	densityFilter->inPlaceFilter(inputInSensorFrame);
 	inputFilters.apply(inputInSensorFrame);
 	PM::DataPoints inputInMapFrame = transformation->compute(inputInSensorFrame, estimatedSensorPose);
 	

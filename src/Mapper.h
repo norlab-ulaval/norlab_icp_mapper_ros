@@ -14,6 +14,7 @@ private:
 	PM::TransformationParameters sensorPose;
 	std::shared_ptr<PM::Transformation> transformation;
 	std::shared_ptr<PM::DataPointsFilter> radiusFilter;
+	std::shared_ptr<PM::DataPointsFilter> densityFilter;
 	std::chrono::time_point<std::chrono::steady_clock> lastTimeMapWasUpdated;
 	PM::TransformationParameters lastSensorPoseWhereMapWasUpdated;
 	std::string icpConfigFilePath;

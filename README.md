@@ -42,6 +42,7 @@ A 2-D/3-D mapping node relying on the "Iterative Closest Point" algorithm.
 | icp_odom  | Topic in which the corrected odometry is published. |
 
 ## Node Services
-|    Name   |       Description      | Parameter Name |            Parameter Description            |
-|:---------:|:----------------------:|:--------------:|:-------------------------------------------:|
-| save_map  | Saves the current map. | filename       | Path of the file in which the map is saved. |
+|        Name        |          Description          | Parameter Name |            Parameter Description            |
+|:------------------:|:-----------------------------:|:--------------:|:-------------------------------------------:|
+|      save_map      |    Saves the current map.     |    filename    | Path of the file in which the map is saved. |
+| reload_yaml_config | Reload all YAML config files. |                |                                             |

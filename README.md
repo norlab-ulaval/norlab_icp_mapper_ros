@@ -1,5 +1,5 @@
-# norlab_icp_mapper
-A 2-D/3-D mapping node relying on the "Iterative Closest Point" algorithm.
+# norlab_icp_mapper_ros
+A bridge between norlab_icp_mapper and ROS.
 
 ## Node Parameters
 |           Name          |                                                    Description                                                    |          Possible values         |                       Default Value                        |

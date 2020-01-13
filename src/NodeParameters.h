@@ -1,8 +1,8 @@
 #include <ros/ros.h>
-#include <pointmatcher/PointMatcher.h>
+#include <norlab_icp_mapper/Mapper.h>
 
-typedef float T;
-typedef PointMatcher<T> PM;
+typedef norlab_icp_mapper::PM PM;
+typedef norlab_icp_mapper::T T;
 
 class NodeParameters
 {

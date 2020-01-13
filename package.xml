@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>norlab_icp_mapper</name>
+  <name>norlab_icp_mapper_ros</name>
   <version>0.0.1</version>
-  <description>A 2-D/3-D mapping node relying on the "Iterative Closest Point" algorithm</description>
+  <description>A bridge between norlab_icp_mapper and ROS.</description>
   
   <!-- One maintainer tag required, multiple allowed, one person per tag -->
   <!-- Example:  -->
@@ -19,13 +19,13 @@
   <!-- Url tags are optional, but multiple are allowed, one per tag -->
   <!-- Optional attribute type can be: website, bugtracker, or repository -->
   <!-- Example: -->
-  <!-- <url type="website">http://wiki.ros.org/norlab_icp_mapper</url> -->
+  <!-- <url type="website">http://wiki.ros.org/norlab_icp_mapper_ros</url> -->
   
   
   <!-- Author tags are optional, multiple are allowed, one per tag -->
   <!-- Authors do not have to be maintainers, but could be -->
   <!-- Example: -->
-  <author>Simon-Pierre Deschenes and Maxime Vaidis</author>
+  <author>Simon-Pierre Deschenes</author>
   
   
   <!-- The *depend tags are used to specify dependencies -->
@@ -57,7 +57,7 @@
   <build_depend>tf2_ros</build_depend>
   <build_depend>tf2</build_depend>
   <build_depend>libpointmatcher_ros</build_depend>
-  <build_depend>libpointmatcher</build_depend>
+  <build_depend>norlab_icp_mapper</build_depend>
   
   <build_export_depend>roscpp</build_export_depend>
   <build_export_depend>sensor_msgs</build_export_depend>
@@ -66,7 +66,7 @@
   <build_export_depend>tf2_ros</build_export_depend>
   <build_export_depend>tf2</build_export_depend>
   <build_export_depend>libpointmatcher_ros</build_export_depend>
-  <build_export_depend>libpointmatcher</build_export_depend>
+  <build_export_depend>norlab_icp_mapper</build_export_depend>
   
   <exec_depend>roscpp</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
@@ -75,8 +75,7 @@
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>tf2</exec_depend>
   <exec_depend>libpointmatcher_ros</exec_depend>
-  <exec_depend>libpointmatcher</exec_depend>
-  
+  <exec_depend>norlab_icp_mapper</exec_depend>
   
   <!-- The export tag contains other, unspecified, tags -->
   <export>

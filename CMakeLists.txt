@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(norlab_icp_mapper)
+project(norlab_icp_mapper_ros)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)
@@ -17,7 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
   libpointmatcher_ros
   )
 
-find_package(libpointmatcher CONFIG)
+find_package(norlab_icp_mapper CONFIG)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -110,7 +110,7 @@ find_package(libpointmatcher CONFIG)
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
   #  INCLUDE_DIRS include
-  #  LIBRARIES norlab_icp_mapper
+  #  LIBRARIES norlab_icp_mapper_ros
   CATKIN_DEPENDS roscpp sensor_msgs std_srvs map_msgs tf2_ros tf2 libpointmatcher_ros
   #  DEPENDS system_lib
 )
@@ -123,12 +123,12 @@ catkin_package(
 ## Your package locations should be listed before other locations
 include_directories(
   ${catkin_INCLUDE_DIRS}
-  ${libpointmatcher_INCLUDE_DIRS}
+  ${norlab_icp_mapper_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/norlab_icp_mapper.cpp
+#   src/${PROJECT_NAME}/norlab_icp_mapper_ros.cpp
 # )
 
 ## Add cmake target dependencies of the library
@@ -139,7 +139,7 @@ include_directories(
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-add_executable(mapper_node src/mapper_node.cpp src/NodeParameters.cpp src/Mapper.cpp)
+add_executable(mapper_node src/mapper_node.cpp src/NodeParameters.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -154,7 +154,7 @@ add_executable(mapper_node src/mapper_node.cpp src/NodeParameters.cpp src/Mapper
 ## Specify libraries to link a library or executable target against
 target_link_libraries(mapper_node
   ${catkin_LIBRARIES}
-  ${libpointmatcher_LIBRARIES}
+  ${norlab_icp_mapper_LIBRARIES}
   )
 
 #############
@@ -197,7 +197,7 @@ target_link_libraries(mapper_node
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_norlab_icp_mapper.cpp)
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_norlab_icp_mapper_ros.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
 #   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
 # endif()

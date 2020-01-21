@@ -17,7 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
   libpointmatcher_ros
   )
 
-find_package(norlab_icp_mapper CONFIG)
+find_package(norlab_icp_mapper)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -111,7 +111,7 @@ find_package(norlab_icp_mapper CONFIG)
 catkin_package(
   #  INCLUDE_DIRS include
   #  LIBRARIES norlab_icp_mapper_ros
-  CATKIN_DEPENDS roscpp sensor_msgs std_srvs map_msgs tf2_ros tf2 libpointmatcher_ros
+  #  CATKIN_DEPENDS roscpp
   #  DEPENDS system_lib
 )
 

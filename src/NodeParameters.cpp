@@ -16,6 +16,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<std::string>("initial_map_file_name", initialMapFileName, "");
 	nodeHandle.param<std::string>("initial_map_pose", initialMapPoseString, "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]");
 	nodeHandle.param<std::string>("final_map_file_name", finalMapFileName, "map.vtk");
+	nodeHandle.param<std::string>("final_trajectory_file_name", finalTrajectoryFileName, "trajectory.vtk");
 	nodeHandle.param<std::string>("icp_config", icpConfig, "");
 	nodeHandle.param<std::string>("input_filters_config", inputFiltersConfig, "");
 	nodeHandle.param<std::string>("map_post_filters_config", mapPostFiltersConfig, "");
@@ -55,12 +56,19 @@ void NodeParameters::validateParameters()
 	
 	if(!isOnline)
 	{
-		std::ofstream ofs(finalMapFileName.c_str(), std::ios_base::app);
-		if(!ofs.good())
+		std::ofstream mapOfs(finalMapFileName.c_str(), std::ios_base::app);
+		if(!mapOfs.good())
 		{
 			throw std::runtime_error("Invalid final map file: " + finalMapFileName);
 		}
-		ofs.close();
+		mapOfs.close();
+		
+		std::ofstream trajectoryOfs(finalTrajectoryFileName.c_str(), std::ios_base::app);
+		if(!trajectoryOfs.good())
+		{
+			throw std::runtime_error("Invalid final trajectory file: " + finalTrajectoryFileName);
+		}
+		trajectoryOfs.close();
 	}
 	
 	if(!icpConfig.empty())

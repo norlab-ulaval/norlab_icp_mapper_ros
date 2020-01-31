@@ -8,16 +8,19 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include "Trajectory.h"
 
 std::unique_ptr<NodeParameters> params;
 std::shared_ptr<PM::Transformation> transformation;
 std::unique_ptr<norlab_icp_mapper::Mapper> mapper;
+std::unique_ptr<Trajectory> trajectory;
 PM::TransformationParameters odomToMap;
 ros::Subscriber sub;
 ros::Publisher mapPublisher;
 ros::Publisher odomPublisher;
 ros::ServiceServer reloadYamlConfigService;
 ros::ServiceServer saveMapService;
+ros::ServiceServer saveTrajectoryService;
 std::unique_ptr<tf2_ros::Buffer> tfBuffer;
 std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
@@ -47,6 +50,12 @@ void saveMap(std::string mapFileName)
 	mapper->getMap().save(mapFileName);
 }
 
+void saveTrajectory(std::string trajectoryFileName)
+{
+	ROS_INFO("Saving trajectory to %s", trajectoryFileName.c_str());
+	trajectory->save(trajectoryFileName);
+}
+
 void mapperShutdownLoop()
 {
 	std::chrono::duration<float> idleTime = std::chrono::duration<float>::zero();
@@ -63,6 +72,7 @@ void mapperShutdownLoop()
 		if(idleTime > std::chrono::duration<float>(params->maxIdleTime))
 		{
 			saveMap(params->finalMapFileName);
+			saveTrajectory(params->finalTrajectoryFileName);
 			ROS_INFO("Shutting down ROS");
 			ros::shutdown();
 		}
@@ -94,6 +104,7 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, params->sensorFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 		
+		trajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
 		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", timeStamp);
 		odomPublisher.publish(odomMsgOut);
 		
@@ -129,6 +140,20 @@ bool saveMapCallback(map_msgs::SaveMap::Request& req, map_msgs::SaveMap::Respons
 	try
 	{
 		saveMap(req.filename.data);
+		return true;
+	}
+	catch(const std::runtime_error& e)
+	{
+		ROS_ERROR_STREAM("Unable to save: " << e.what());
+		return false;
+	}
+}
+
+bool saveTrajectoryCallback(map_msgs::SaveMap::Request& req, map_msgs::SaveMap::Response& res)
+{
+	try
+	{
+		saveTrajectory(req.filename.data);
 		return true;
 	}
 	catch(const std::runtime_error& e)
@@ -211,11 +236,13 @@ int main(int argc, char** argv)
 	if(params->is3D)
 	{
 		sub = n.subscribe("points_in", messageQueueSize, pointCloud2Callback);
+		trajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
 		odomToMap = PM::Matrix::Identity(4, 4);
 	}
 	else
 	{
 		sub = n.subscribe("points_in", messageQueueSize, laserScanCallback);
+		trajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
 		odomToMap = PM::Matrix::Identity(3, 3);
 	}
 	
@@ -224,6 +251,7 @@ int main(int argc, char** argv)
 	
 	reloadYamlConfigService = n.advertiseService("reload_yaml_config", reloadYamlConfigCallback);
 	saveMapService = n.advertiseService("save_map", saveMapCallback);
+	saveTrajectoryService = n.advertiseService("save_trajectory", saveTrajectoryCallback);
 	
 	std::thread mapPublisherThread = std::thread(mapPublisherLoop);
 	std::thread mapTfPublisherThread = std::thread(mapTfPublisherLoop);

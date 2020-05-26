@@ -1,5 +1,5 @@
 #include <ros/ros.h>
-#include <norlab_icp_mapper/Mapper.h>
+#include "Mapper.h"
 
 typedef norlab_icp_mapper::PM PM;
 typedef norlab_icp_mapper::T T;

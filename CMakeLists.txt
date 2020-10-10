@@ -17,7 +17,8 @@ find_package(catkin REQUIRED COMPONENTS
   libpointmatcher_ros
   )
 
-find_package(norlab_icp_mapper)
+find_package(libpointmatcher REQUIRED)
+find_package(norlab_icp_mapper REQUIRED)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)

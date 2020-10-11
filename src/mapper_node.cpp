@@ -9,13 +9,15 @@
 #include <mutex>
 #include <thread>
 #include "Trajectory.h"
+#include <norlab_icp_mapper_ros/State.h>
 
 std::unique_ptr<NodeParameters> params;
 std::shared_ptr<PM::Transformation> transformation;
 std::unique_ptr<norlab_icp_mapper::Mapper> mapper;
 std::unique_ptr<Trajectory> trajectory;
 PM::TransformationParameters odomToMap;
-ros::Subscriber sub;
+ros::Subscriber pointcloudSubscriber;
+ros::Subscriber stateSubscriber;
 ros::Publisher mapPublisher;
 ros::Publisher odomPublisher;
 ros::ServiceServer reloadYamlConfigService;
@@ -26,6 +28,8 @@ std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
 std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;
 std::mutex idleTimeLock;
+norlab_icp_mapper::State estimatedState;
+std::mutex stateMutex;
 
 void loadInitialMap()
 {
@@ -94,7 +98,12 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		
-		mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+		std::chrono::time_point<std::chrono::steady_clock> currentTimeStamp(std::chrono::nanoseconds(timeStamp.toNSec()));
+		stateMutex.lock();
+		norlab_icp_mapper::State currentEstimatedState = estimatedState;
+		stateMutex.unlock();
+		
+		mapper->processInput(input, sensorToMapBeforeUpdate, currentTimeStamp, currentEstimatedState);
 		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
 		
 		mapTfLock.lock();
@@ -127,6 +136,35 @@ void pointCloud2Callback(const sensor_msgs::PointCloud2& cloudMsgIn)
 void laserScanCallback(const sensor_msgs::LaserScan& scanMsgIn)
 {
 	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(scanMsgIn), scanMsgIn.header.stamp);
+}
+
+void stateCallback(const norlab_icp_mapper_ros::State& stateMsgIn)
+{
+	ros::Time messageStamp = stateMsgIn.header.stamp;
+	if(stateMsgIn.source == norlab_icp_mapper_ros::State::SOURCE_GPS)
+	{
+		stateMutex.lock();
+		estimatedState.position = Eigen::Matrix<T, 3, 1>(stateMsgIn.position.x, stateMsgIn.position.y, stateMsgIn.position.z);
+		estimatedState.positionCovariance = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(stateMsgIn.position_covariance.data()).cast<T>();
+		estimatedState.positionTimeStamp = std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(messageStamp.toNSec()));
+		stateMutex.unlock();
+	}
+	else if(stateMsgIn.source == norlab_icp_mapper_ros::State::SOURCE_IMU)
+	{
+		stateMutex.lock();
+		estimatedState.orientation =
+				Eigen::Matrix<T, 4, 1>(stateMsgIn.orientation.x, stateMsgIn.orientation.y, stateMsgIn.orientation.z, stateMsgIn.orientation.w);
+		estimatedState.orientationCovariance = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(stateMsgIn.orientation_covariance.data()).cast<T>();
+		estimatedState.orientationTimeStamp = std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(messageStamp.toNSec()));
+		estimatedState.linearAcceleration =
+				Eigen::Matrix<T, 3, 1>(stateMsgIn.linear_acceleration.x, stateMsgIn.linear_acceleration.y, stateMsgIn.linear_acceleration.z);
+		estimatedState.linearAccelerationCovariance = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(stateMsgIn.linear_acceleration_covariance.data()).cast<T>();
+		estimatedState.linearAccelerationTimeStamp = std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(messageStamp.toNSec()));
+		estimatedState.angularVelocity = Eigen::Matrix<T, 3, 1>(stateMsgIn.angular_velocity.x, stateMsgIn.angular_velocity.y, stateMsgIn.angular_velocity.z);
+		estimatedState.angularVelocityCovariance = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(stateMsgIn.angular_velocity_covariance.data()).cast<T>();
+		estimatedState.angularVelocityTimeStamp = std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(messageStamp.toNSec()));
+		stateMutex.unlock();
+	}
 }
 
 bool reloadYamlConfigCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
@@ -208,11 +246,12 @@ int main(int argc, char** argv)
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(new norlab_icp_mapper::Mapper(params->icpConfig, params->inputFiltersConfig, params->mapPostFiltersConfig, params->mapUpdateCondition,
-												params->mapUpdateOverlap, params->mapUpdateDelay, params->mapUpdateDistance, params->minDistNewPoint,
-												params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
-												params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
-												params->isMapping));
+	mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(
+			new norlab_icp_mapper::Mapper(params->icpConfig, params->inputFiltersConfig, params->mapPostFiltersConfig, params->mapUpdateCondition,
+										  params->mapUpdateOverlap, params->mapUpdateDelay, params->mapUpdateDistance, params->minDistNewPoint,
+										  params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
+										  params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
+										  params->isMapping));
 	
 	loadInitialMap();
 	
@@ -235,16 +274,18 @@ int main(int argc, char** argv)
 	
 	if(params->is3D)
 	{
-		sub = n.subscribe("points_in", messageQueueSize, pointCloud2Callback);
+		pointcloudSubscriber = n.subscribe("points_in", messageQueueSize, pointCloud2Callback);
 		trajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
 		odomToMap = PM::Matrix::Identity(4, 4);
 	}
 	else
 	{
-		sub = n.subscribe("points_in", messageQueueSize, laserScanCallback);
+		pointcloudSubscriber = n.subscribe("points_in", messageQueueSize, laserScanCallback);
 		trajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
 		odomToMap = PM::Matrix::Identity(3, 3);
 	}
+	
+	stateSubscriber = n.subscribe("state_in", messageQueueSize, stateCallback);
 	
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);

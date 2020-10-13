@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf2_ros
   tf2
   libpointmatcher_ros
+  std_msgs
   )
 
 find_package(libpointmatcher REQUIRED)

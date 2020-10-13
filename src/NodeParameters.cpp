@@ -21,6 +21,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<std::string>("input_filters_config", inputFiltersConfig, "");
 	nodeHandle.param<std::string>("map_post_filters_config", mapPostFiltersConfig, "");
 	nodeHandle.param<std::string>("map_update_condition", mapUpdateCondition, "overlap");
+	nodeHandle.param<std::string>("mean_residual_file_name", meanResidualFileName, "");
 	nodeHandle.param<float>("map_update_overlap", mapUpdateOverlap, 0.9);
 	nodeHandle.param<float>("map_update_delay", mapUpdateDelay, 1);
 	nodeHandle.param<float>("map_update_distance", mapUpdateDistance, 0.5);

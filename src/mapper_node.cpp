@@ -8,7 +8,12 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <fstream>
+#include <std_msgs/Float32.h>
+#include <sensor_msgs/Imu.h>
 #include "Trajectory.h"
+
+const double GRAVITATIONAL_ACCELERATION = -9.807;
 
 std::unique_ptr<NodeParameters> params;
 std::shared_ptr<PM::Transformation> transformation;
@@ -26,6 +31,12 @@ std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
 std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;
 std::mutex idleTimeLock;
+std::ofstream meanResidualFile;
+ros::Publisher residualPublisher;
+std::mutex imuMeasurementMutex;
+double latestLinearAcceleration;
+double latestAngularSpeed;
+PM::ICP icp;
 
 void loadInitialMap()
 {
@@ -91,11 +102,38 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 {
 	try
 	{
+		double linearAcceleration, angularSpeed;
+		imuMeasurementMutex.lock();
+		linearAcceleration = latestLinearAcceleration;
+		angularSpeed = latestAngularSpeed;
+		imuMeasurementMutex.unlock();
+		
 		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		
+		PM::DataPoints map = mapper->getMap();
+		
 		mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
 		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
+		
+		PM::DataPoints inputInMapFrame = transformation->compute(input, sensorToMapAfterUpdate);
+		
+		icp.matcher->init(map);
+		PM::Matches matches(icp.matcher->findClosests(inputInMapFrame));
+		PM::Parameters outlierParams;
+		outlierParams["ratio"] = "1.0";
+		std::shared_ptr<PM::OutlierFilter> outlierFilter = PM::get().OutlierFilterRegistrar.create("TrimmedDistOutlierFilter", outlierParams);
+		PM::OutlierWeights outlierWeights = outlierFilter->compute(inputInMapFrame, map, matches);
+		float meanResidual = icp.errorMinimizer->getResidualError(inputInMapFrame, map, outlierWeights, matches) / inputInMapFrame.getNbPoints();
+		
+		std_msgs::Float32 residualMsg;
+		residualMsg.data = meanResidual;
+		residualPublisher.publish(residualMsg);
+		
+		if(meanResidualFile.is_open())
+		{
+			meanResidualFile << timeStamp << "," << linearAcceleration << "," << angularSpeed << "," << meanResidual << std::endl;
+		}
 		
 		mapTfLock.lock();
 		odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
@@ -198,6 +236,21 @@ void mapTfPublisherLoop()
 	}
 }
 
+void imuCallback(const sensor_msgs::Imu& msg)
+{
+	double linearAcceleration = std::sqrt(std::pow(msg.linear_acceleration.x, 2) +
+										  std::pow(msg.linear_acceleration.y, 2) +
+										  std::pow(msg.linear_acceleration.z - GRAVITATIONAL_ACCELERATION, 2));
+	double angularSpeed = std::sqrt(std::pow(msg.angular_velocity.x, 2) +
+									std::pow(msg.angular_velocity.y, 2) +
+									std::pow(msg.angular_velocity.z, 2));
+	
+	imuMeasurementMutex.lock();
+	latestLinearAcceleration = linearAcceleration;
+	latestAngularSpeed = angularSpeed;
+	imuMeasurementMutex.unlock();
+}
+
 int main(int argc, char** argv)
 {
 	ros::init(argc, argv, "mapper_node");
@@ -208,13 +261,26 @@ int main(int argc, char** argv)
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(new norlab_icp_mapper::Mapper(params->icpConfig, params->inputFiltersConfig, params->mapPostFiltersConfig, params->mapUpdateCondition,
-												params->mapUpdateOverlap, params->mapUpdateDelay, params->mapUpdateDistance, params->minDistNewPoint,
-												params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
-												params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
-												params->isMapping));
+	mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(
+			new norlab_icp_mapper::Mapper(params->icpConfig, params->inputFiltersConfig, params->mapPostFiltersConfig, params->mapUpdateCondition,
+										  params->mapUpdateOverlap, params->mapUpdateDelay, params->mapUpdateDistance, params->minDistNewPoint,
+										  params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
+										  params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
+										  params->isMapping));
 	
 	loadInitialMap();
+	
+	std::ifstream ifs(params->icpConfig.c_str());
+	icp.loadFromYaml(ifs);
+	ifs.close();
+	
+	if(!params->meanResidualFileName.empty())
+	{
+		meanResidualFile.open(params->meanResidualFileName);
+		meanResidualFile.close();
+		meanResidualFile.open(params->meanResidualFileName, std::ios::app);
+		meanResidualFile << "stamp,linear_acceleration,angular_speed,residual" << std::endl;
+	}
 	
 	std::thread mapperShutdownThread;
 	int messageQueueSize;
@@ -246,6 +312,10 @@ int main(int argc, char** argv)
 		odomToMap = PM::Matrix::Identity(3, 3);
 	}
 	
+	ros::Subscriber sub2 = n.subscribe("acceleration_topic", messageQueueSize, imuCallback);
+	
+	residualPublisher = n.advertise<std_msgs::Float32>("residual", 1);
+	
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
 	
@@ -264,6 +334,8 @@ int main(int argc, char** argv)
 	{
 		mapperShutdownThread.join();
 	}
+	
+	meanResidualFile.close();
 	
 	return 0;
 }

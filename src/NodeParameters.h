@@ -28,6 +28,7 @@ public:
 	std::string inputFiltersConfig;
 	std::string mapPostFiltersConfig;
 	std::string mapUpdateCondition;
+	std::string meanResidualFileName;
 	float mapUpdateOverlap;
 	float mapUpdateDelay;
 	float mapUpdateDistance;

@@ -47,6 +47,7 @@ public:
 	bool is3D;
 	bool isOnline;
 	bool computeProbDynamic;
+	bool computeResidual;
 	bool isMapping;
 	
 	NodeParameters(ros::NodeHandle privateNodeHandle);

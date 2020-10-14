@@ -111,28 +111,37 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		
-		PM::DataPoints map = mapper->getMap();
-		
-		mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
-		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getSensorPose();
-		
-		PM::DataPoints inputInMapFrame = transformation->compute(input, sensorToMapAfterUpdate);
-		
-		icp.matcher->init(map);
-		PM::Matches matches(icp.matcher->findClosests(inputInMapFrame));
-		PM::Parameters outlierParams;
-		outlierParams["ratio"] = "1.0";
-		std::shared_ptr<PM::OutlierFilter> outlierFilter = PM::get().OutlierFilterRegistrar.create("TrimmedDistOutlierFilter", outlierParams);
-		PM::OutlierWeights outlierWeights = outlierFilter->compute(inputInMapFrame, map, matches);
-		float meanResidual = icp.errorMinimizer->getResidualError(inputInMapFrame, map, outlierWeights, matches) / inputInMapFrame.getNbPoints();
-		
-		std_msgs::Float32 residualMsg;
-		residualMsg.data = meanResidual;
-		residualPublisher.publish(residualMsg);
-		
-		if(meanResidualFile.is_open())
+		PM::TransformationParameters sensorToMapAfterUpdate;
+		if(params->computeResidual)
 		{
-			meanResidualFile << timeStamp << "," << linearAcceleration << "," << angularSpeed << "," << meanResidual << std::endl;
+			PM::DataPoints map = mapper->getMap();
+			
+			mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+			sensorToMapAfterUpdate = mapper->getSensorPose();
+		
+			PM::DataPoints inputInMapFrame = transformation->compute(input, sensorToMapAfterUpdate);
+			
+			icp.matcher->init(map);
+			PM::Matches matches(icp.matcher->findClosests(inputInMapFrame));
+			PM::Parameters outlierParams;
+			outlierParams["ratio"] = "1.0";
+			std::shared_ptr<PM::OutlierFilter> outlierFilter = PM::get().OutlierFilterRegistrar.create("TrimmedDistOutlierFilter", outlierParams);
+			PM::OutlierWeights outlierWeights = outlierFilter->compute(inputInMapFrame, map, matches);
+			float meanResidual = icp.errorMinimizer->getResidualError(inputInMapFrame, map, outlierWeights, matches) / inputInMapFrame.getNbPoints();
+			
+			std_msgs::Float32 residualMsg;
+			residualMsg.data = meanResidual;
+			residualPublisher.publish(residualMsg);
+			
+			if(meanResidualFile.is_open())
+			{
+				meanResidualFile << timeStamp << "," << linearAcceleration << "," << angularSpeed << "," << meanResidual << std::endl;
+			}
+		}
+		else
+		{
+			mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+			sensorToMapAfterUpdate = mapper->getSensorPose();
 		}
 		
 		mapTfLock.lock();

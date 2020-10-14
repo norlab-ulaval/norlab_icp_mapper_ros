@@ -40,6 +40,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("is_3D", is3D, true);
 	nodeHandle.param<bool>("is_online", isOnline, true);
 	nodeHandle.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
+	nodeHandle.param<bool>("compute_residual", computeResidual, false);
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 }
 

@@ -17,7 +17,6 @@ private:
 
 public:
 	std::string odomFrame;
-	std::string sensorFrame;
 	std::string robotFrame;
 	std::string initialMapFileName;
 	std::string initialMapPoseString;

@@ -87,11 +87,11 @@ PM::TransformationParameters findTransform(std::string sourceFrame, std::string 
 	return PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(tf, transformDimension);
 }
 
-void gotInput(PM::DataPoints input, ros::Time timeStamp)
+void gotInput(PM::DataPoints input, std::string sensorFrame, ros::Time timeStamp)
 {
 	try
 	{
-		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
+		PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		
 		mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
@@ -101,7 +101,7 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
 		mapTfLock.unlock();
 		
-		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, params->sensorFrame, timeStamp, input.getHomogeneousDim());
+		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 		
 		trajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
@@ -121,12 +121,12 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 
 void pointCloud2Callback(const sensor_msgs::PointCloud2& cloudMsgIn)
 {
-	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(cloudMsgIn), cloudMsgIn.header.stamp);
+	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
 }
 
 void laserScanCallback(const sensor_msgs::LaserScan& scanMsgIn)
 {
-	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(scanMsgIn), scanMsgIn.header.stamp);
+	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<T>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
 }
 
 bool reloadYamlConfigCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
@@ -208,11 +208,14 @@ int main(int argc, char** argv)
 	
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	
-	mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(new norlab_icp_mapper::Mapper(params->icpConfig, params->inputFiltersConfig, params->mapPostFiltersConfig, params->mapUpdateCondition,
-												params->mapUpdateOverlap, params->mapUpdateDelay, params->mapUpdateDistance, params->minDistNewPoint,
-												params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
-												params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
-												params->isMapping));
+	mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(new norlab_icp_mapper::Mapper(params->icpConfig, params->inputFiltersConfig,
+																					  params->mapPostFiltersConfig, params->mapUpdateCondition,
+																					  params->mapUpdateOverlap, params->mapUpdateDelay,
+																					  params->mapUpdateDistance, params->minDistNewPoint,
+																					  params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic,
+																					  params->beamHalfAngle, params->epsilonA, params->epsilonD, params->alpha,
+																					  params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
+																					  params->isMapping));
 	
 	loadInitialMap();
 	

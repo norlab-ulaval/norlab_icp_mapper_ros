@@ -13,7 +13,7 @@
 #include <sensor_msgs/Imu.h>
 #include "Trajectory.h"
 
-const double GRAVITATIONAL_ACCELERATION = -9.807;
+const double GRAVITATIONAL_ACCELERATION = 9.807;
 
 std::unique_ptr<NodeParameters> params;
 std::shared_ptr<PM::Transformation> transformation;
@@ -34,8 +34,8 @@ std::mutex idleTimeLock;
 std::ofstream meanResidualFile;
 ros::Publisher residualPublisher;
 std::mutex imuMeasurementMutex;
-double latestLinearAcceleration;
-double latestAngularSpeed;
+double latestLinearAcceleration = -1;
+double latestAngularSpeed = -1;
 PM::ICP icp;
 
 void loadInitialMap()
@@ -112,7 +112,7 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		
 		PM::TransformationParameters sensorToMapAfterUpdate;
-		if(params->computeResidual)
+		if(params->computeResidual && latestLinearAcceleration != -1 && latestAngularSpeed != -1)
 		{
 			PM::DataPoints map = mapper->getMap();
 			
@@ -247,17 +247,27 @@ void mapTfPublisherLoop()
 
 void imuCallback(const sensor_msgs::Imu& msg)
 {
-	double linearAcceleration = std::sqrt(std::pow(msg.linear_acceleration.x, 2) +
-										  std::pow(msg.linear_acceleration.y, 2) +
-										  std::pow(msg.linear_acceleration.z - GRAVITATIONAL_ACCELERATION, 2));
-	double angularSpeed = std::sqrt(std::pow(msg.angular_velocity.x, 2) +
-									std::pow(msg.angular_velocity.y, 2) +
-									std::pow(msg.angular_velocity.z, 2));
-	
-	imuMeasurementMutex.lock();
-	latestLinearAcceleration = linearAcceleration;
-	latestAngularSpeed = angularSpeed;
-	imuMeasurementMutex.unlock();
+	try
+	{
+		std::string imuFrame = msg.header.frame_id[0] == '/' ? msg.header.frame_id.substr(1) : msg.header.frame_id;
+		Eigen::Matrix4d imuToOdom = findTransform(imuFrame, params->odomFrame, msg.header.stamp, 4).cast<double>();
+		Eigen::Vector4d linearAcceleration(msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z, 1);
+		Eigen::Vector3d angularSpeed(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
+		
+		Eigen::Vector4d linearAccelerationInOdomFrame = imuToOdom * linearAcceleration;
+		
+		linearAccelerationInOdomFrame[2] -= GRAVITATIONAL_ACCELERATION;
+		
+		imuMeasurementMutex.lock();
+		latestLinearAcceleration = linearAccelerationInOdomFrame.topRows(3).norm();
+		latestAngularSpeed = angularSpeed.norm();
+		imuMeasurementMutex.unlock();
+	}
+	catch(tf2::TransformException& ex)
+	{
+		ROS_WARN("%s", ex.what());
+		return;
+	}
 }
 
 int main(int argc, char** argv)

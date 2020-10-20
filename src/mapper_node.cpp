@@ -33,7 +33,7 @@ std::mutex idleTimeLock;
 std::ofstream meanResidualFile;
 ros::Publisher residualPublisher;
 std::mutex imuMeasurementMutex;
-Eigen::Vector3d gravityVector;
+double gravity;
 bool firstImuMessageReceived = false;
 double latestLinearAcceleration;
 double latestAngularSpeed;
@@ -259,10 +259,12 @@ void imuCallback(const sensor_msgs::Imu& msg)
 	
 	if(!firstImuMessageReceived)
 	{
-		gravityVector = linearAcceleration;
+		gravity = linearAcceleration[2];
 	}
 	
-	double linearAccelerationNorm = (linearAcceleration - gravityVector).norm();
+	linearAcceleration[2] -= gravity;
+	
+	double linearAccelerationNorm = linearAcceleration.norm();
 	double angularVelocityNorm = angularVelocity.norm();
 	
 	imuMeasurementMutex.lock();

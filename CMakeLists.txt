@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   map_msgs
   tf2_ros
   tf2
+  tf2_geometry_msgs
   libpointmatcher_ros
   std_msgs
   )

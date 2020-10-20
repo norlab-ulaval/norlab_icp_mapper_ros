@@ -2,6 +2,7 @@
 #include <ros/ros.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
 #include <std_srvs/Empty.h>
 #include <map_msgs/SaveMap.h>
@@ -249,34 +250,26 @@ void mapTfPublisherLoop()
 
 void imuCallback(const sensor_msgs::Imu& msg)
 {
-	try
+	geometry_msgs::Vector3 linearAccelerationMsg;
+	geometry_msgs::TransformStamped transformation;
+	transformation.transform.rotation = msg.orientation;
+	tf2::doTransform(msg.linear_acceleration, linearAccelerationMsg, transformation);
+	Eigen::Vector3d linearAcceleration(linearAccelerationMsg.x, linearAccelerationMsg.y, linearAccelerationMsg.z);
+	Eigen::Vector3d angularVelocity(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
+	
+	if(!firstImuMessageReceived)
 	{
-		std::string imuFrame = msg.header.frame_id[0] == '/' ? msg.header.frame_id.substr(1) : msg.header.frame_id;
-		Eigen::Matrix4d imuToOdom = findTransform(imuFrame, params->odomFrame, msg.header.stamp, 4).cast<double>();
-		Eigen::Vector4d linearAcceleration(msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z, 1);
-		Eigen::Vector3d angularVelocity(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
-		
-		Eigen::Vector4d linearAccelerationInOdomFrame = imuToOdom * linearAcceleration;
-		
-		if(!firstImuMessageReceived)
-		{
-			gravityVector = linearAccelerationInOdomFrame.topRows(3);
-		}
-		
-		double linearAccelerationNorm = (linearAccelerationInOdomFrame.topRows(3) - gravityVector).norm();
-		double angularVelocityNorm = angularVelocity.norm();
-		
-		imuMeasurementMutex.lock();
-		latestLinearAcceleration = linearAccelerationNorm;
-		latestAngularSpeed = angularVelocityNorm;
-		firstImuMessageReceived = true;
-		imuMeasurementMutex.unlock();
+		gravityVector = linearAcceleration;
 	}
-	catch(tf2::TransformException& ex)
-	{
-		ROS_WARN("%s", ex.what());
-		return;
-	}
+	
+	double linearAccelerationNorm = (linearAcceleration - gravityVector).norm();
+	double angularVelocityNorm = angularVelocity.norm();
+	
+	imuMeasurementMutex.lock();
+	latestLinearAcceleration = linearAccelerationNorm;
+	latestAngularSpeed = angularVelocityNorm;
+	firstImuMessageReceived = true;
+	imuMeasurementMutex.unlock();
 }
 
 int main(int argc, char** argv)

@@ -13,8 +13,6 @@
 #include <sensor_msgs/Imu.h>
 #include "Trajectory.h"
 
-const double GRAVITATIONAL_ACCELERATION = 9.807;
-
 std::unique_ptr<NodeParameters> params;
 std::shared_ptr<PM::Transformation> transformation;
 std::unique_ptr<norlab_icp_mapper::Mapper> mapper;
@@ -34,8 +32,10 @@ std::mutex idleTimeLock;
 std::ofstream meanResidualFile;
 ros::Publisher residualPublisher;
 std::mutex imuMeasurementMutex;
-double latestLinearAcceleration = -1;
-double latestAngularSpeed = -1;
+Eigen::Vector3d gravityVector;
+bool firstImuMessageReceived = false;
+double latestLinearAcceleration;
+double latestAngularSpeed;
 PM::ICP icp;
 
 void loadInitialMap()
@@ -103,16 +103,18 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 	try
 	{
 		double linearAcceleration, angularSpeed;
+		bool validImuMeasurement;
 		imuMeasurementMutex.lock();
 		linearAcceleration = latestLinearAcceleration;
 		angularSpeed = latestAngularSpeed;
+		validImuMeasurement = firstImuMessageReceived;
 		imuMeasurementMutex.unlock();
 		
 		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		
 		PM::TransformationParameters sensorToMapAfterUpdate;
-		if(params->computeResidual && latestLinearAcceleration != -1 && latestAngularSpeed != -1)
+		if(params->computeResidual && validImuMeasurement)
 		{
 			PM::DataPoints map = mapper->getMap();
 			
@@ -252,15 +254,22 @@ void imuCallback(const sensor_msgs::Imu& msg)
 		std::string imuFrame = msg.header.frame_id[0] == '/' ? msg.header.frame_id.substr(1) : msg.header.frame_id;
 		Eigen::Matrix4d imuToOdom = findTransform(imuFrame, params->odomFrame, msg.header.stamp, 4).cast<double>();
 		Eigen::Vector4d linearAcceleration(msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z, 1);
-		Eigen::Vector3d angularSpeed(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
+		Eigen::Vector3d angularVelocity(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
 		
 		Eigen::Vector4d linearAccelerationInOdomFrame = imuToOdom * linearAcceleration;
 		
-		linearAccelerationInOdomFrame[2] -= GRAVITATIONAL_ACCELERATION;
+		if(!firstImuMessageReceived)
+		{
+			gravityVector = linearAccelerationInOdomFrame.topRows(3);
+		}
+		
+		double linearAccelerationNorm = (linearAccelerationInOdomFrame.topRows(3) - gravityVector).norm();
+		double angularVelocityNorm = angularVelocity.norm();
 		
 		imuMeasurementMutex.lock();
-		latestLinearAcceleration = linearAccelerationInOdomFrame.topRows(3).norm();
-		latestAngularSpeed = angularSpeed.norm();
+		latestLinearAcceleration = linearAccelerationNorm;
+		latestAngularSpeed = angularVelocityNorm;
+		firstImuMessageReceived = true;
 		imuMeasurementMutex.unlock();
 	}
 	catch(tf2::TransformException& ex)

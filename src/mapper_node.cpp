@@ -99,6 +99,8 @@ PM::TransformationParameters findTransform(std::string sourceFrame, std::string 
 	return PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(tf, transformDimension);
 }
 
+ros::Time lastIcpTime;
+Eigen::Vector3f lastIcpPosition;
 void gotInput(PM::DataPoints input, ros::Time timeStamp)
 {
 	try
@@ -136,10 +138,15 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 			residualMsg.data = meanResidual;
 			residualPublisher.publish(residualMsg);
 			
-			if(meanResidualFile.is_open())
+			Eigen::Vector3f currentIcpPosition = sensorToMapAfterUpdate.topRightCorner(3, 1);
+			if(meanResidualFile.is_open() && !lastIcpTime.isZero())
 			{
-				meanResidualFile << timeStamp << "," << linearAcceleration << "," << angularSpeed << "," << meanResidual << std::endl;
+				double deltaTime = (timeStamp - lastIcpTime).toSec();
+				Eigen::Vector3f currentVelocity = (currentIcpPosition - lastIcpPosition) / deltaTime;
+				meanResidualFile << timeStamp << "," << currentVelocity.norm() << "," << linearAcceleration << "," << angularSpeed << "," << meanResidual << std::endl;
 			}
+			lastIcpTime = timeStamp;
+			lastIcpPosition = currentIcpPosition;
 		}
 		else
 		{
@@ -155,7 +162,7 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 		
 		trajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
-		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", timeStamp);
+		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", params->robotFrame, timeStamp);
 		odomPublisher.publish(odomMsgOut);
 		
 		idleTimeLock.lock();
@@ -302,7 +309,7 @@ int main(int argc, char** argv)
 		meanResidualFile.open(params->meanResidualFileName);
 		meanResidualFile.close();
 		meanResidualFile.open(params->meanResidualFileName, std::ios::app);
-		meanResidualFile << "stamp,linear_acceleration,angular_speed,residual" << std::endl;
+		meanResidualFile << "stamp,linear_speed,linear_acceleration,angular_speed,residual" << std::endl;
 	}
 	
 	std::thread mapperShutdownThread;

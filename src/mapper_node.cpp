@@ -105,7 +105,7 @@ void gotInput(PM::DataPoints input, std::string sensorFrame, ros::Time timeStamp
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 		
 		trajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
-		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", timeStamp);
+		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", params->robotFrame, timeStamp);
 		odomPublisher.publish(odomMsgOut);
 		
 		idleTimeLock.lock();

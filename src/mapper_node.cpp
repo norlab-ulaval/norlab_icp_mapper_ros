@@ -106,17 +106,75 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 	{
 		bool validInertiaMeasurement = false;
 		imu_odom::Inertia currentInertia;
-		inertiaMeasurementsMutex.lock();
-		while(inertiaMeasurements.size() >= 2 && (++inertiaMeasurements.begin())->header.stamp <= timeStamp)
+		if(params->isOnline)
 		{
-			inertiaMeasurements.pop_front();
+			// use inertia measurement at the beginning of the point cloud or latest one if not possible
+			inertiaMeasurementsMutex.lock();
+			while(inertiaMeasurements.size() >= 2 && inertiaMeasurements.front().header.stamp < timeStamp)
+			{
+				inertiaMeasurements.pop_front();
+			}
+			if(!inertiaMeasurements.empty())
+			{
+				validInertiaMeasurement = true;
+				currentInertia = inertiaMeasurements.front();
+			}
+			inertiaMeasurementsMutex.unlock();
 		}
-		if(!inertiaMeasurements.empty())
+		else
 		{
-			validInertiaMeasurement = true;
-			currentInertia = inertiaMeasurements.front();
+			// compute average inertia measurement throughout the point cloud
+			inertiaMeasurementsMutex.lock();
+			ros::Time latestInertiaMeasurementTime = inertiaMeasurements.back().header.stamp;
+			inertiaMeasurementsMutex.unlock();
+			while(latestInertiaMeasurementTime < (timeStamp + ros::Duration(0.1)))
+			{
+				ros::Duration(0.01).sleep();
+				inertiaMeasurementsMutex.lock();
+				latestInertiaMeasurementTime = inertiaMeasurements.back().header.stamp;
+				inertiaMeasurementsMutex.unlock();
+			}
+			
+			inertiaMeasurementsMutex.lock();
+			while(inertiaMeasurements.front().header.stamp < timeStamp)
+			{
+				inertiaMeasurements.pop_front();
+			}
+			int inertiaMeasurementCounter = 0;
+			for(auto it = inertiaMeasurements.begin(); it != inertiaMeasurements.end(); it++)
+			{
+				if(it->header.stamp < (timeStamp + ros::Duration(0.1)))
+				{
+					validInertiaMeasurement = true;
+					inertiaMeasurementCounter ++;
+					currentInertia.linear_velocity.x += it->linear_velocity.x;
+					currentInertia.linear_velocity.y += it->linear_velocity.y;
+					currentInertia.linear_velocity.z += it->linear_velocity.z;
+					currentInertia.linear_acceleration.x += it->linear_acceleration.x;
+					currentInertia.linear_acceleration.y += it->linear_acceleration.y;
+					currentInertia.linear_acceleration.z += it->linear_acceleration.z;
+					currentInertia.angular_velocity.x += it->angular_velocity.x;
+					currentInertia.angular_velocity.y += it->angular_velocity.y;
+					currentInertia.angular_velocity.z += it->angular_velocity.z;
+					currentInertia.angular_acceleration.x += it->angular_acceleration.x;
+					currentInertia.angular_acceleration.y += it->angular_acceleration.y;
+					currentInertia.angular_acceleration.z += it->angular_acceleration.z;
+				}
+			}
+			inertiaMeasurementsMutex.unlock();
+			currentInertia.linear_velocity.x /= inertiaMeasurementCounter;
+			currentInertia.linear_velocity.y /= inertiaMeasurementCounter;
+			currentInertia.linear_velocity.z /= inertiaMeasurementCounter;
+			currentInertia.linear_acceleration.x /= inertiaMeasurementCounter;
+			currentInertia.linear_acceleration.y /= inertiaMeasurementCounter;
+			currentInertia.linear_acceleration.z /= inertiaMeasurementCounter;
+			currentInertia.angular_velocity.x /= inertiaMeasurementCounter;
+			currentInertia.angular_velocity.y /= inertiaMeasurementCounter;
+			currentInertia.angular_velocity.z /= inertiaMeasurementCounter;
+			currentInertia.angular_acceleration.x /= inertiaMeasurementCounter;
+			currentInertia.angular_acceleration.y /= inertiaMeasurementCounter;
+			currentInertia.angular_acceleration.z /= inertiaMeasurementCounter;
 		}
-		inertiaMeasurementsMutex.unlock();
 		
 		float linearSpeedNoiseX = 0.0f * currentInertia.linear_velocity.x;
 		float linearSpeedNoiseY = 0.0f * currentInertia.linear_velocity.y;
@@ -369,7 +427,8 @@ int main(int argc, char** argv)
 	std::thread mapPublisherThread = std::thread(mapPublisherLoop);
 	std::thread mapTfPublisherThread = std::thread(mapTfPublisherLoop);
 	
-	ros::spin();
+	ros::MultiThreadedSpinner spinner;
+	spinner.spin();
 	
 	mapPublisherThread.join();
 	mapTfPublisherThread.join();

@@ -11,8 +11,8 @@
 #include <thread>
 #include <fstream>
 #include <std_msgs/Float32.h>
-#include <sensor_msgs/Imu.h>
 #include "Trajectory.h"
+#include <imu_odom/Inertia.h>
 
 std::unique_ptr<NodeParameters> params;
 std::shared_ptr<PM::Transformation> transformation;
@@ -32,12 +32,13 @@ std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;
 std::mutex idleTimeLock;
 std::ofstream meanResidualFile;
 ros::Publisher residualPublisher;
-std::mutex imuMeasurementMutex;
-double gravity;
-bool firstImuMessageReceived = false;
-double latestLinearAcceleration;
-double latestAngularSpeed;
+std::mutex inertiaMeasurementsMutex;
+std::list<imu_odom::Inertia> inertiaMeasurements;
 PM::ICP icp;
+
+bool firstIcpOdomSet = false;
+PM::TransformationParameters firstIcpOdom;
+PM::TransformationParameters lastIcpOdom;
 
 void loadInitialMap()
 {
@@ -99,31 +100,52 @@ PM::TransformationParameters findTransform(std::string sourceFrame, std::string 
 	return PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(tf, transformDimension);
 }
 
-ros::Time lastIcpTime;
-Eigen::Vector3f lastIcpPosition;
 void gotInput(PM::DataPoints input, ros::Time timeStamp)
 {
 	try
 	{
-		double linearAcceleration, angularSpeed;
-		bool validImuMeasurement;
-		imuMeasurementMutex.lock();
-		linearAcceleration = latestLinearAcceleration;
-		angularSpeed = latestAngularSpeed;
-		validImuMeasurement = firstImuMessageReceived;
-		imuMeasurementMutex.unlock();
+		bool validInertiaMeasurement = false;
+		imu_odom::Inertia currentInertia;
+		inertiaMeasurementsMutex.lock();
+		while(inertiaMeasurements.size() >= 2 && (++inertiaMeasurements.begin())->header.stamp <= timeStamp)
+		{
+			inertiaMeasurements.pop_front();
+		}
+		if(!inertiaMeasurements.empty())
+		{
+			validInertiaMeasurement = true;
+			currentInertia = inertiaMeasurements.front();
+		}
+		inertiaMeasurementsMutex.unlock();
+		
+		float linearSpeedNoiseX = 0.0f * currentInertia.linear_velocity.x;
+		float linearSpeedNoiseY = 0.0f * currentInertia.linear_velocity.y;
+		float linearSpeedNoiseZ = 0.0f * currentInertia.linear_velocity.z;
+		float linearAccelerationNoiseX = 1.4f * std::log(currentInertia.linear_acceleration.x + 0.3) + 1.7;
+		float linearAccelerationNoiseY = 1.4f * std::log(currentInertia.linear_acceleration.y + 0.3) + 1.7;
+		float linearAccelerationNoiseZ = 1.4f * std::log(currentInertia.linear_acceleration.z + 0.3) + 1.7;
+		float angularSpeedNoiseX = 1.0f * std::pow(currentInertia.angular_velocity.x / 3.5, 4);
+		float angularSpeedNoiseY = 1.0f * std::pow(currentInertia.angular_velocity.y / 3.5, 4);
+		float angularSpeedNoiseZ = 1.0f * std::pow(currentInertia.angular_velocity.z / 3.5, 4);
+		float angularAccelerationNoiseX = 0.0f * currentInertia.angular_acceleration.x;
+		float angularAccelerationNoiseY = 0.0f * currentInertia.angular_acceleration.y;
+		float angularAccelerationNoiseZ = 0.0f * currentInertia.angular_acceleration.z;
 		
 		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		
 		PM::TransformationParameters sensorToMapAfterUpdate;
-		if(params->computeResidual && validImuMeasurement)
+		if(params->computeResidual && validInertiaMeasurement)
 		{
 			PM::DataPoints map = mapper->getMap();
 			
-			mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+			mapper->processInput(input, sensorToMapBeforeUpdate,
+								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())),
+								 linearSpeedNoiseX, linearSpeedNoiseY, linearSpeedNoiseZ, linearAccelerationNoiseX, linearAccelerationNoiseY,
+								 linearAccelerationNoiseZ, angularSpeedNoiseX, angularSpeedNoiseY, angularSpeedNoiseZ, angularAccelerationNoiseX,
+								 angularAccelerationNoiseY, angularAccelerationNoiseZ);
 			sensorToMapAfterUpdate = mapper->getSensorPose();
-		
+
 			PM::DataPoints inputInMapFrame = transformation->compute(input, sensorToMapAfterUpdate);
 			
 			icp.matcher->init(map);
@@ -138,19 +160,20 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 			residualMsg.data = meanResidual;
 			residualPublisher.publish(residualMsg);
 			
-			Eigen::Vector3f currentIcpPosition = sensorToMapAfterUpdate.topRightCorner(3, 1);
-			if(meanResidualFile.is_open() && !lastIcpTime.isZero())
-			{
-				double deltaTime = (timeStamp - lastIcpTime).toSec();
-				Eigen::Vector3f currentVelocity = (currentIcpPosition - lastIcpPosition) / deltaTime;
-				meanResidualFile << timeStamp << "," << currentVelocity.norm() << "," << linearAcceleration << "," << angularSpeed << "," << meanResidual << std::endl;
-			}
-			lastIcpTime = timeStamp;
-			lastIcpPosition = currentIcpPosition;
+			float linearSpeed = std::sqrt(std::pow(currentInertia.linear_velocity.x, 2) + std::pow(currentInertia.linear_velocity.y, 2) + std::pow(currentInertia.linear_velocity.z, 2));
+			float linearAcceleration = std::sqrt(std::pow(currentInertia.linear_acceleration.x, 2) + std::pow(currentInertia.linear_acceleration.y, 2) + std::pow(currentInertia.linear_acceleration.z, 2));
+			float angularSpeed = std::sqrt(std::pow(currentInertia.angular_velocity.x, 2) + std::pow(currentInertia.angular_velocity.y, 2) + std::pow(currentInertia.angular_velocity.z, 2));
+			float angularAcceleration = std::sqrt(std::pow(currentInertia.angular_acceleration.x, 2) + std::pow(currentInertia.angular_acceleration.y, 2) + std::pow(currentInertia.angular_acceleration.z, 2));
+			
+			meanResidualFile << timeStamp << "," << linearSpeed << "," << linearAcceleration << "," << angularSpeed << "," << angularAcceleration << "," << meanResidual << std::endl;
 		}
 		else
 		{
-			mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+			mapper->processInput(input, sensorToMapBeforeUpdate,
+								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())),
+								 linearSpeedNoiseX, linearSpeedNoiseY, linearSpeedNoiseZ, linearAccelerationNoiseX, linearAccelerationNoiseY,
+								 linearAccelerationNoiseZ, angularSpeedNoiseX, angularSpeedNoiseY, angularSpeedNoiseZ, angularAccelerationNoiseX,
+								 angularAccelerationNoiseY, angularAccelerationNoiseZ);
 			sensorToMapAfterUpdate = mapper->getSensorPose();
 		}
 		
@@ -160,6 +183,13 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		
 		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, params->sensorFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
+		
+		if(!firstIcpOdomSet)
+		{
+			firstIcpOdomSet = true;
+			firstIcpOdom = robotToMap;
+		}
+		lastIcpOdom = robotToMap;
 		
 		trajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
 		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", params->robotFrame, timeStamp);
@@ -248,37 +278,18 @@ void mapTfPublisherLoop()
 		mapTfLock.unlock();
 		
 		geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<T>(currentOdomToMap, "map", params->odomFrame,
-																													ros::Time::now());
+																											                ros::Time::now());
 		tfBroadcaster->sendTransform(currentOdomToMapTf);
 		
 		publishRate.sleep();
 	}
 }
 
-void imuCallback(const sensor_msgs::Imu& msg)
+void inertiaCallback(const imu_odom::Inertia& msg)
 {
-	geometry_msgs::Vector3 linearAccelerationMsg;
-	geometry_msgs::TransformStamped transformation;
-	transformation.transform.rotation = msg.orientation;
-	tf2::doTransform(msg.linear_acceleration, linearAccelerationMsg, transformation);
-	Eigen::Vector3d linearAcceleration(linearAccelerationMsg.x, linearAccelerationMsg.y, linearAccelerationMsg.z);
-	Eigen::Vector3d angularVelocity(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
-	
-	if(!firstImuMessageReceived)
-	{
-		gravity = linearAcceleration[2];
-	}
-	
-	linearAcceleration[2] -= gravity;
-	
-	double linearAccelerationNorm = linearAcceleration.norm();
-	double angularVelocityNorm = angularVelocity.norm();
-	
-	imuMeasurementMutex.lock();
-	latestLinearAcceleration = linearAccelerationNorm;
-	latestAngularSpeed = angularVelocityNorm;
-	firstImuMessageReceived = true;
-	imuMeasurementMutex.unlock();
+	inertiaMeasurementsMutex.lock();
+	inertiaMeasurements.emplace_back(msg);
+	inertiaMeasurementsMutex.unlock();
 }
 
 int main(int argc, char** argv)
@@ -296,7 +307,8 @@ int main(int argc, char** argv)
 										  params->mapUpdateOverlap, params->mapUpdateDelay, params->mapUpdateDistance, params->minDistNewPoint,
 										  params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
 										  params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
-										  params->isMapping));
+										  params->useSkewWeights, params->isMapping, params->skewModel, params->cornerPointWeight, params->weightQuantile,
+										  params->rangePrecision));
 	
 	loadInitialMap();
 	
@@ -304,26 +316,27 @@ int main(int argc, char** argv)
 	icp.loadFromYaml(ifs);
 	ifs.close();
 	
-	if(!params->meanResidualFileName.empty())
+	if(params->computeResidual)
 	{
 		meanResidualFile.open(params->meanResidualFileName);
-		meanResidualFile.close();
-		meanResidualFile.open(params->meanResidualFileName, std::ios::app);
-		meanResidualFile << "stamp,linear_speed,linear_acceleration,angular_speed,residual" << std::endl;
+		meanResidualFile << "stamp,linear_speed,linear_acceleration,angular_speed,angular_acceleration,residual" << std::endl;
 	}
 	
 	std::thread mapperShutdownThread;
 	int messageQueueSize;
+	int inertiaQueueSize;
 	if(params->isOnline)
 	{
 		tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer);
 		messageQueueSize = 1;
+		inertiaQueueSize = 100;
 	}
 	else
 	{
 		mapperShutdownThread = std::thread(mapperShutdownLoop);
 		tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(ros::Duration(ros::DURATION_MAX)));
 		messageQueueSize = 0;
+		inertiaQueueSize = 0;
 	}
 	
 	tf2_ros::TransformListener tfListener(*tfBuffer);
@@ -342,7 +355,7 @@ int main(int argc, char** argv)
 		odomToMap = PM::Matrix::Identity(3, 3);
 	}
 	
-	ros::Subscriber sub2 = n.subscribe("acceleration_topic", messageQueueSize, imuCallback);
+	ros::Subscriber sub2 = n.subscribe("inertia_topic", inertiaQueueSize, inertiaCallback);
 	
 	residualPublisher = n.advertise<std_msgs::Float32>("residual", 1);
 	
@@ -366,6 +379,7 @@ int main(int argc, char** argv)
 	}
 	
 	meanResidualFile.close();
+	std::cout << "Transformation between first and last pose:" << std::endl << firstIcpOdom.inverse() * lastIcpOdom << std::endl;
 	
 	return 0;
 }

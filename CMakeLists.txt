@@ -17,6 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf2_geometry_msgs
   libpointmatcher_ros
   std_msgs
+  imu_odom
   )
 
 find_package(libpointmatcher REQUIRED)

@@ -48,7 +48,12 @@ public:
 	bool isOnline;
 	bool computeProbDynamic;
 	bool computeResidual;
+	bool useSkewWeights;
 	bool isMapping;
+	int skewModel;
+	float cornerPointWeight;
+	float weightQuantile;
+	float rangePrecision;
 	
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

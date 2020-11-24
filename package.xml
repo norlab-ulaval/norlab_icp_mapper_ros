@@ -60,6 +60,7 @@
   <build_depend>libpointmatcher_ros</build_depend>
   <build_depend>norlab_icp_mapper</build_depend>
   <build_depend>std_msgs</build_depend>
+  <build_depend>imu_odom</build_depend>
   
   <build_export_depend>roscpp</build_export_depend>
   <build_export_depend>sensor_msgs</build_export_depend>
@@ -71,6 +72,7 @@
   <build_export_depend>libpointmatcher_ros</build_export_depend>
   <build_export_depend>norlab_icp_mapper</build_export_depend>
   <build_export_depend>std_msgs</build_export_depend>
+  <build_export_depend>imu_odom</build_export_depend>
   
   <exec_depend>roscpp</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
@@ -82,6 +84,7 @@
   <exec_depend>libpointmatcher_ros</exec_depend>
   <exec_depend>norlab_icp_mapper</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>imu_odom</exec_depend>
   
   <!-- The export tag contains other, unspecified, tags -->
   <export>

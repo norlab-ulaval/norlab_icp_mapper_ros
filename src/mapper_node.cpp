@@ -193,7 +193,7 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		
 		PM::TransformationParameters sensorToMapAfterUpdate;
-		if(params->computeResidual && validInertiaMeasurement)
+		if(params->computeResidual && validInertiaMeasurement && firstIcpOdomSet)
 		{
 			PM::DataPoints map = mapper->getMap();
 			
@@ -212,7 +212,8 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 			outlierParams["ratio"] = "1.0";
 			std::shared_ptr<PM::OutlierFilter> outlierFilter = PM::get().OutlierFilterRegistrar.create("TrimmedDistOutlierFilter", outlierParams);
 			PM::OutlierWeights outlierWeights = outlierFilter->compute(inputInMapFrame, map, matches);
-			float meanResidual = icp.errorMinimizer->getResidualError(inputInMapFrame, map, outlierWeights, matches) / inputInMapFrame.getNbPoints();
+			std::shared_ptr<PM::ErrorMinimizer> errorMinimizer = PM::get().ErrorMinimizerRegistrar.create("PointToPointErrorMinimizer");
+			float meanResidual = errorMinimizer->getResidualError(inputInMapFrame, map, outlierWeights, matches) / inputInMapFrame.getNbPoints();
 			
 			std_msgs::Float32 residualMsg;
 			residualMsg.data = meanResidual;

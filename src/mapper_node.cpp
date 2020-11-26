@@ -439,7 +439,10 @@ int main(int argc, char** argv)
 	}
 	
 	meanResidualFile.close();
-	std::cout << "Transformation between first and last pose:" << std::endl << firstIcpOdom.inverse() * lastIcpOdom << std::endl;
+	std::ofstream finalTransformationFile;
+	finalTransformationFile.open(params->finalTransformationFileName, std::ios::app);
+	finalTransformationFile << firstIcpOdom.inverse() * lastIcpOdom << std::endl;
+	finalTransformationFile.close();
 	
 	return 0;
 }

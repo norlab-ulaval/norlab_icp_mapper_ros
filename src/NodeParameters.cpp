@@ -16,6 +16,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<std::string>("initial_map_file_name", initialMapFileName, "");
 	nodeHandle.param<std::string>("initial_map_pose", initialMapPoseString, "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]");
 	nodeHandle.param<std::string>("final_map_file_name", finalMapFileName, "map.vtk");
+	nodeHandle.param<std::string>("final_map_pose_file_name", finalMapPoseFileName, "final_map_pose.txt");
 	nodeHandle.param<std::string>("final_trajectory_file_name", finalTrajectoryFileName, "trajectory.vtk");
 	nodeHandle.param<std::string>("icp_config", icpConfig, "");
 	nodeHandle.param<std::string>("input_filters_config", inputFiltersConfig, "");

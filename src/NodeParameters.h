@@ -23,6 +23,7 @@ public:
 	std::string initialMapPoseString;
 	PM::TransformationParameters initialMapPose;
 	std::string finalMapFileName;
+	std::string finalMapPoseFileName;
 	std::string finalTrajectoryFileName;
 	std::string icpConfig;
 	std::string inputFiltersConfig;

@@ -212,8 +212,8 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 			outlierParams["ratio"] = "1.0";
 			std::shared_ptr<PM::OutlierFilter> outlierFilter = PM::get().OutlierFilterRegistrar.create("TrimmedDistOutlierFilter", outlierParams);
 			PM::OutlierWeights outlierWeights = outlierFilter->compute(inputInMapFrame, map, matches);
-			std::shared_ptr<PM::ErrorMinimizer> errorMinimizer = PM::get().ErrorMinimizerRegistrar.create("PointToPointErrorMinimizer");
-			float meanResidual = errorMinimizer->getResidualError(inputInMapFrame, map, outlierWeights, matches) / inputInMapFrame.getNbPoints();
+			typename PM::ErrorMinimizer::ErrorElements errorElements(inputInMapFrame, map, outlierWeights, matches);
+			float meanResidual = (errorElements.reading.features - errorElements.reference.features).colwise().norm().mean();
 			
 			std_msgs::Float32 residualMsg;
 			residualMsg.data = meanResidual;

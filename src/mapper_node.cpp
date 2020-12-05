@@ -175,19 +175,19 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 			currentInertia.angular_acceleration.y /= inertiaMeasurementCounter;
 			currentInertia.angular_acceleration.z /= inertiaMeasurementCounter;
 		}
-		
-		float linearSpeedNoiseX = 0.0f * currentInertia.linear_velocity.x;
-		float linearSpeedNoiseY = 0.0f * currentInertia.linear_velocity.y;
-		float linearSpeedNoiseZ = 0.0f * currentInertia.linear_velocity.z;
-		float linearAccelerationNoiseX = 1.4f * std::log(currentInertia.linear_acceleration.x + 0.3) + 1.7;
-		float linearAccelerationNoiseY = 1.4f * std::log(currentInertia.linear_acceleration.y + 0.3) + 1.7;
-		float linearAccelerationNoiseZ = 1.4f * std::log(currentInertia.linear_acceleration.z + 0.3) + 1.7;
-		float angularSpeedNoiseX = 1.0f * std::pow(currentInertia.angular_velocity.x / 3.5, 4);
-		float angularSpeedNoiseY = 1.0f * std::pow(currentInertia.angular_velocity.y / 3.5, 4);
-		float angularSpeedNoiseZ = 1.0f * std::pow(currentInertia.angular_velocity.z / 3.5, 4);
-		float angularAccelerationNoiseX = 0.0f * currentInertia.angular_acceleration.x;
-		float angularAccelerationNoiseY = 0.0f * currentInertia.angular_acceleration.y;
-		float angularAccelerationNoiseZ = 0.0f * currentInertia.angular_acceleration.z;
+
+		float linearSpeedNoiseX = (std::log(std::fabs(currentInertia.linear_velocity.x) + 0.001) / 65.0) + 0.105;
+		float linearSpeedNoiseY = (std::log(std::fabs(currentInertia.linear_velocity.y) + 0.001) / 65.0) + 0.105;
+		float linearSpeedNoiseZ = (std::log(std::fabs(currentInertia.linear_velocity.z) + 0.001) / 65.0) + 0.105;
+		float linearAccelerationNoiseX = 0.0f * std::fabs(currentInertia.linear_acceleration.x);
+		float linearAccelerationNoiseY = 0.0f * std::fabs(currentInertia.linear_acceleration.y);
+		float linearAccelerationNoiseZ = 0.0f * std::fabs(currentInertia.linear_acceleration.z);
+		float angularSpeedNoiseX = std::pow(std::fabs(currentInertia.angular_velocity.x)/65.0, 2);
+		float angularSpeedNoiseY = std::pow(std::fabs(currentInertia.angular_velocity.y)/65.0, 2);
+		float angularSpeedNoiseZ = std::pow(std::fabs(currentInertia.angular_velocity.z)/65.0, 2);
+		float angularAccelerationNoiseX = 0.0f * std::fabs(currentInertia.angular_acceleration.x);
+		float angularAccelerationNoiseY = 0.0f * std::fabs(currentInertia.angular_acceleration.y);
+		float angularAccelerationNoiseZ = 0.0f * std::fabs(currentInertia.angular_acceleration.z);
 		
 		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;

@@ -104,26 +104,24 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 {
 	try
 	{
-		bool validInertiaMeasurement = false;
-		imu_odom::Inertia currentInertia;
+		std::vector<imu_odom::Inertia> cloudInertiaMeasurements;
 		if(params->isOnline)
 		{
 			// use inertia measurement at the beginning of the point cloud or latest one if not possible
 			inertiaMeasurementsMutex.lock();
-			while(inertiaMeasurements.size() >= 2 && inertiaMeasurements.front().header.stamp < timeStamp)
+			while(inertiaMeasurements.size() >= 2 && (++inertiaMeasurements.begin())->header.stamp <= timeStamp)
 			{
 				inertiaMeasurements.pop_front();
 			}
 			if(!inertiaMeasurements.empty())
 			{
-				validInertiaMeasurement = true;
-				currentInertia = inertiaMeasurements.front();
+				cloudInertiaMeasurements.push_back(inertiaMeasurements.front());
 			}
 			inertiaMeasurementsMutex.unlock();
 		}
 		else
 		{
-			// compute average inertia measurement throughout the point cloud
+			// take all inertia measurements throughout the point cloud
 			inertiaMeasurementsMutex.lock();
 			ros::Time latestInertiaMeasurementTime = inertiaMeasurements.back().header.stamp;
 			inertiaMeasurementsMutex.unlock();
@@ -136,72 +134,94 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 			}
 			
 			inertiaMeasurementsMutex.lock();
-			while(inertiaMeasurements.front().header.stamp < timeStamp)
+			while(inertiaMeasurements.size() >= 2 && (++inertiaMeasurements.begin())->header.stamp <= timeStamp)
 			{
 				inertiaMeasurements.pop_front();
 			}
-			int inertiaMeasurementCounter = 0;
 			for(auto it = inertiaMeasurements.begin(); it != inertiaMeasurements.end(); it++)
 			{
 				if(it->header.stamp < (timeStamp + ros::Duration(0.1)))
 				{
-					validInertiaMeasurement = true;
-					inertiaMeasurementCounter ++;
-					currentInertia.linear_velocity.x += it->linear_velocity.x;
-					currentInertia.linear_velocity.y += it->linear_velocity.y;
-					currentInertia.linear_velocity.z += it->linear_velocity.z;
-					currentInertia.linear_acceleration.x += it->linear_acceleration.x;
-					currentInertia.linear_acceleration.y += it->linear_acceleration.y;
-					currentInertia.linear_acceleration.z += it->linear_acceleration.z;
-					currentInertia.angular_velocity.x += it->angular_velocity.x;
-					currentInertia.angular_velocity.y += it->angular_velocity.y;
-					currentInertia.angular_velocity.z += it->angular_velocity.z;
-					currentInertia.angular_acceleration.x += it->angular_acceleration.x;
-					currentInertia.angular_acceleration.y += it->angular_acceleration.y;
-					currentInertia.angular_acceleration.z += it->angular_acceleration.z;
+					cloudInertiaMeasurements.push_back(*it);
 				}
 			}
 			inertiaMeasurementsMutex.unlock();
-			currentInertia.linear_velocity.x /= inertiaMeasurementCounter;
-			currentInertia.linear_velocity.y /= inertiaMeasurementCounter;
-			currentInertia.linear_velocity.z /= inertiaMeasurementCounter;
-			currentInertia.linear_acceleration.x /= inertiaMeasurementCounter;
-			currentInertia.linear_acceleration.y /= inertiaMeasurementCounter;
-			currentInertia.linear_acceleration.z /= inertiaMeasurementCounter;
-			currentInertia.angular_velocity.x /= inertiaMeasurementCounter;
-			currentInertia.angular_velocity.y /= inertiaMeasurementCounter;
-			currentInertia.angular_velocity.z /= inertiaMeasurementCounter;
-			currentInertia.angular_acceleration.x /= inertiaMeasurementCounter;
-			currentInertia.angular_acceleration.y /= inertiaMeasurementCounter;
-			currentInertia.angular_acceleration.z /= inertiaMeasurementCounter;
 		}
 
-		float linearSpeedNoiseX = (std::log(std::fabs(currentInertia.linear_velocity.x) + 0.001) / 65.0) + 0.105;
-		float linearSpeedNoiseY = (std::log(std::fabs(currentInertia.linear_velocity.y) + 0.001) / 65.0) + 0.105;
-		float linearSpeedNoiseZ = (std::log(std::fabs(currentInertia.linear_velocity.z) + 0.001) / 65.0) + 0.105;
-		float linearAccelerationNoiseX = 0.0f * std::fabs(currentInertia.linear_acceleration.x);
-		float linearAccelerationNoiseY = 0.0f * std::fabs(currentInertia.linear_acceleration.y);
-		float linearAccelerationNoiseZ = 0.0f * std::fabs(currentInertia.linear_acceleration.z);
-		float angularSpeedNoiseX = std::pow(std::fabs(currentInertia.angular_velocity.x)/65.0, 2);
-		float angularSpeedNoiseY = std::pow(std::fabs(currentInertia.angular_velocity.y)/65.0, 2);
-		float angularSpeedNoiseZ = std::pow(std::fabs(currentInertia.angular_velocity.z)/65.0, 2);
-		float angularAccelerationNoiseX = 0.0f * std::fabs(currentInertia.angular_acceleration.x);
-		float angularAccelerationNoiseY = 0.0f * std::fabs(currentInertia.angular_acceleration.y);
-		float angularAccelerationNoiseZ = 0.0f * std::fabs(currentInertia.angular_acceleration.z);
+		std::string linearSpeedNoisesX = "";
+		std::string linearSpeedNoisesY = "";
+		std::string linearSpeedNoisesZ = "";
+		std::string linearAccelerationNoisesX = "";
+		std::string linearAccelerationNoisesY = "";
+		std::string linearAccelerationNoisesZ = "";
+		std::string angularSpeedNoisesX = "";
+		std::string angularSpeedNoisesY = "";
+		std::string angularSpeedNoisesZ = "";
+		std::string angularAccelerationNoisesX = "";
+		std::string angularAccelerationNoisesY = "";
+		std::string angularAccelerationNoisesZ = "";
+		std::string measureTimes = "";
+		if(cloudInertiaMeasurements.size() > 0)
+		{
+			for(int i = 0; i < cloudInertiaMeasurements.size(); i++)
+			{
+				linearSpeedNoisesX += std::to_string((std::log(std::fabs(cloudInertiaMeasurements[i].linear_velocity.x) + 0.001) / 65.0) + 0.105) +
+								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				linearSpeedNoisesY += std::to_string((std::log(std::fabs(cloudInertiaMeasurements[i].linear_velocity.y) + 0.001) / 65.0) + 0.105) +
+								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				linearSpeedNoisesZ += std::to_string((std::log(std::fabs(cloudInertiaMeasurements[i].linear_velocity.z) + 0.001) / 65.0) + 0.105) +
+								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				linearAccelerationNoisesX += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].linear_acceleration.x)) +
+								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				linearAccelerationNoisesY += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].linear_acceleration.y)) +
+										 (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				linearAccelerationNoisesZ += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].linear_acceleration.z)) +
+										 (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularSpeedNoisesX += std::to_string(std::pow(std::fabs(cloudInertiaMeasurements[i].angular_velocity.x)/65.0, 2)) +
+								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularSpeedNoisesY += std::to_string(std::pow(std::fabs(cloudInertiaMeasurements[i].angular_velocity.y)/65.0, 2)) +
+								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularSpeedNoisesZ += std::to_string(std::pow(std::fabs(cloudInertiaMeasurements[i].angular_velocity.z)/65.0, 2)) +
+								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularAccelerationNoisesX += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].angular_acceleration.x)) +
+										 (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularAccelerationNoisesY += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].angular_acceleration.y)) +
+										 (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularAccelerationNoisesZ += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].angular_acceleration.z)) +
+										 (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				measureTimes += std::to_string((cloudInertiaMeasurements[i].header.stamp - timeStamp).toSec()) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+			}
+		}
+		else
+		{
+			linearSpeedNoisesX = "0";
+			linearSpeedNoisesY = "0";
+			linearSpeedNoisesZ = "0";
+			linearAccelerationNoisesX = "0";
+			linearAccelerationNoisesY = "0";
+			linearAccelerationNoisesZ = "0";
+			angularSpeedNoisesX = "0";
+			angularSpeedNoisesY = "0";
+			angularSpeedNoisesZ = "0";
+			angularAccelerationNoisesX = "0";
+			angularAccelerationNoisesY = "0";
+			angularAccelerationNoisesZ = "0";
+			measureTimes = "0";
+		}
 		
 		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		
 		PM::TransformationParameters sensorToMapAfterUpdate;
-		if(params->computeResidual && validInertiaMeasurement && firstIcpOdomSet)
+		if(params->computeResidual && cloudInertiaMeasurements.size() > 0 && firstIcpOdomSet)
 		{
 			PM::DataPoints map = mapper->getMap();
 			
 			mapper->processInput(input, sensorToMapBeforeUpdate,
 								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())),
-								 linearSpeedNoiseX, linearSpeedNoiseY, linearSpeedNoiseZ, linearAccelerationNoiseX, linearAccelerationNoiseY,
-								 linearAccelerationNoiseZ, angularSpeedNoiseX, angularSpeedNoiseY, angularSpeedNoiseZ, angularAccelerationNoiseX,
-								 angularAccelerationNoiseY, angularAccelerationNoiseZ);
+								 linearSpeedNoisesX, linearSpeedNoisesY, linearSpeedNoisesZ, linearAccelerationNoisesX, linearAccelerationNoisesY,
+								 linearAccelerationNoisesZ, angularSpeedNoisesX, angularSpeedNoisesY, angularSpeedNoisesZ, angularAccelerationNoisesX,
+								 angularAccelerationNoisesY, angularAccelerationNoisesZ, measureTimes);
 			sensorToMapAfterUpdate = mapper->getSensorPose();
 
 			PM::DataPoints inputInMapFrame = transformation->compute(input, sensorToMapAfterUpdate);
@@ -219,6 +239,23 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 			residualMsg.data = meanResidual;
 			residualPublisher.publish(residualMsg);
 			
+			imu_odom::Inertia currentInertia;
+			for(const auto& inertiaMeasurement: cloudInertiaMeasurements)
+			{
+				currentInertia.linear_velocity.x += inertiaMeasurement.linear_velocity.x / cloudInertiaMeasurements.size();
+				currentInertia.linear_velocity.y += inertiaMeasurement.linear_velocity.y / cloudInertiaMeasurements.size();
+				currentInertia.linear_velocity.z += inertiaMeasurement.linear_velocity.z / cloudInertiaMeasurements.size();
+				currentInertia.linear_acceleration.x += inertiaMeasurement.linear_acceleration.x / cloudInertiaMeasurements.size();
+				currentInertia.linear_acceleration.y += inertiaMeasurement.linear_acceleration.y / cloudInertiaMeasurements.size();
+				currentInertia.linear_acceleration.z += inertiaMeasurement.linear_acceleration.z / cloudInertiaMeasurements.size();
+				currentInertia.angular_velocity.x += inertiaMeasurement.angular_velocity.x / cloudInertiaMeasurements.size();
+				currentInertia.angular_velocity.y += inertiaMeasurement.angular_velocity.y / cloudInertiaMeasurements.size();
+				currentInertia.angular_velocity.z += inertiaMeasurement.angular_velocity.z / cloudInertiaMeasurements.size();
+				currentInertia.angular_acceleration.x += inertiaMeasurement.angular_acceleration.x / cloudInertiaMeasurements.size();
+				currentInertia.angular_acceleration.y += inertiaMeasurement.angular_acceleration.y / cloudInertiaMeasurements.size();
+				currentInertia.angular_acceleration.z += inertiaMeasurement.angular_acceleration.z / cloudInertiaMeasurements.size();
+			}
+			
 			float linearSpeed = std::sqrt(std::pow(currentInertia.linear_velocity.x, 2) + std::pow(currentInertia.linear_velocity.y, 2) + std::pow(currentInertia.linear_velocity.z, 2));
 			float linearAcceleration = std::sqrt(std::pow(currentInertia.linear_acceleration.x, 2) + std::pow(currentInertia.linear_acceleration.y, 2) + std::pow(currentInertia.linear_acceleration.z, 2));
 			float angularSpeed = std::sqrt(std::pow(currentInertia.angular_velocity.x, 2) + std::pow(currentInertia.angular_velocity.y, 2) + std::pow(currentInertia.angular_velocity.z, 2));
@@ -230,9 +267,9 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		{
 			mapper->processInput(input, sensorToMapBeforeUpdate,
 								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())),
-								 linearSpeedNoiseX, linearSpeedNoiseY, linearSpeedNoiseZ, linearAccelerationNoiseX, linearAccelerationNoiseY,
-								 linearAccelerationNoiseZ, angularSpeedNoiseX, angularSpeedNoiseY, angularSpeedNoiseZ, angularAccelerationNoiseX,
-								 angularAccelerationNoiseY, angularAccelerationNoiseZ);
+								 linearSpeedNoisesX, linearSpeedNoisesY, linearSpeedNoisesZ, linearAccelerationNoisesX, linearAccelerationNoisesY,
+								 linearAccelerationNoisesZ, angularSpeedNoisesX, angularSpeedNoisesY, angularSpeedNoisesZ, angularAccelerationNoisesX,
+								 angularAccelerationNoisesY, angularAccelerationNoisesZ, measureTimes);
 			sensorToMapAfterUpdate = mapper->getSensorPose();
 		}
 		

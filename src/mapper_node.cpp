@@ -22,6 +22,7 @@ PM::TransformationParameters odomToMap;
 ros::Subscriber sub;
 ros::Publisher mapPublisher;
 ros::Publisher odomPublisher;
+ros::Publisher filteredCloudPublisher;
 ros::ServiceServer reloadYamlConfigService;
 ros::ServiceServer saveMapService;
 ros::ServiceServer saveTrajectoryService;
@@ -272,6 +273,9 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 								 angularAccelerationNoisesY, angularAccelerationNoisesZ, measureTimes);
 			sensorToMapAfterUpdate = mapper->getSensorPose();
 		}
+
+		sensor_msgs::PointCloud2 filteredCloud = PointMatcher_ROS::pointMatcherCloudToRosMsg<T>(input, params->sensorFrame, timeStamp);
+		filteredCloudPublisher.publish(filteredCloud);
 		
 		mapTfLock.lock();
 		odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
@@ -457,6 +461,7 @@ int main(int argc, char** argv)
 	
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
+	filteredCloudPublisher = n.advertise<sensor_msgs::PointCloud2>("filtered_cloud", messageQueueSize);
 	
 	reloadYamlConfigService = n.advertiseService("reload_yaml_config", reloadYamlConfigCallback);
 	saveMapService = n.advertiseService("save_map", saveMapCallback);

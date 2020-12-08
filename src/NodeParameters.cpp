@@ -43,6 +43,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("is_online", isOnline, true);
 	nodeHandle.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
 	nodeHandle.param<bool>("compute_residual", computeResidual, false);
+	nodeHandle.param<bool>("perpendicular_residual", perpendicularResidual, false);
 	nodeHandle.param<bool>("use_skew_weights", useSkewWeights, false);
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 	nodeHandle.param<int>("skew_model", skewModel, 0);

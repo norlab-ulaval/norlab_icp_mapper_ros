@@ -50,6 +50,7 @@ public:
 	bool isOnline;
 	bool computeProbDynamic;
 	bool computeResidual;
+	bool perpendicularResidual;
 	bool useSkewWeights;
 	bool isMapping;
 	int skewModel;

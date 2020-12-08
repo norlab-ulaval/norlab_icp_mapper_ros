@@ -13,6 +13,7 @@
 #include <std_msgs/Float32.h>
 #include "Trajectory.h"
 #include <imu_odom/Inertia.h>
+#include <set>
 
 std::unique_ptr<NodeParameters> params;
 std::shared_ptr<PM::Transformation> transformation;
@@ -227,8 +228,42 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 
 			PM::DataPoints inputInMapFrame = transformation->compute(input, sensorToMapAfterUpdate);
 			
-			icp.matcher->init(map);
-			PM::Matches matches(icp.matcher->findClosests(inputInMapFrame));
+			PM::Parameters matcherParams;
+			matcherParams["knn"] = "1";
+			matcherParams["maxDist"] = "1";
+			matcherParams["epsilon"] = "0";
+			std::shared_ptr<PM::Matcher> matcher = PM::get().MatcherRegistrar.create("KDTreeMatcher", matcherParams);
+			matcher->init(map);
+			PM::Matches matches(matcher->findClosests(inputInMapFrame));
+			
+			if(params->perpendicularResidual)
+			{
+				int i = 0;
+				std::set<int> mapPointIds;
+				for(int j = 0; j < matches.ids.cols(); j++)
+				{
+					int readingId = j;
+					int referenceId = matches.ids(0, j);
+					Eigen::Vector3f normal = map.getDescriptorViewByName("normals").col(referenceId);
+					if(std::acos(std::abs(normal(1) / normal.norm())) <= 0.5)
+					{
+						inputInMapFrame.setColFrom(i, inputInMapFrame, readingId);
+						i++;
+						mapPointIds.insert(referenceId);
+					}
+				}
+				inputInMapFrame.conservativeResize(i);
+				i = 0;
+				for(auto it = mapPointIds.begin(); it != mapPointIds.end(); it++)
+				{
+					map.setColFrom(i, map, *it);
+					i++;
+				}
+				map.conservativeResize(i);
+				matcher->init(map);
+				matches = matcher->findClosests(inputInMapFrame);
+			}
+
 			PM::Parameters outlierParams;
 			outlierParams["ratio"] = "1.0";
 			std::shared_ptr<PM::OutlierFilter> outlierFilter = PM::get().OutlierFilterRegistrar.create("TrimmedDistOutlierFilter", outlierParams);

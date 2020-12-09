@@ -292,12 +292,15 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 				currentInertia.angular_acceleration.z += inertiaMeasurement.angular_acceleration.z / cloudInertiaMeasurements.size();
 			}
 			
+			float x = sensorToMapAfterUpdate(0, 3);
+			float y = sensorToMapAfterUpdate(1, 3);
+			float z = sensorToMapAfterUpdate(2, 3);
 			float linearSpeed = std::sqrt(std::pow(currentInertia.linear_velocity.x, 2) + std::pow(currentInertia.linear_velocity.y, 2) + std::pow(currentInertia.linear_velocity.z, 2));
 			float linearAcceleration = std::sqrt(std::pow(currentInertia.linear_acceleration.x, 2) + std::pow(currentInertia.linear_acceleration.y, 2) + std::pow(currentInertia.linear_acceleration.z, 2));
 			float angularSpeed = std::sqrt(std::pow(currentInertia.angular_velocity.x, 2) + std::pow(currentInertia.angular_velocity.y, 2) + std::pow(currentInertia.angular_velocity.z, 2));
 			float angularAcceleration = std::sqrt(std::pow(currentInertia.angular_acceleration.x, 2) + std::pow(currentInertia.angular_acceleration.y, 2) + std::pow(currentInertia.angular_acceleration.z, 2));
 			
-			meanResidualFile << timeStamp << "," << linearSpeed << "," << linearAcceleration << "," << angularSpeed << "," << angularAcceleration << "," << meanResidual << std::endl;
+			meanResidualFile << timeStamp << "," << x << "," << y << "," << z << "," << linearSpeed << "," << linearAcceleration << "," << angularSpeed << "," << angularAcceleration << "," << meanResidual << std::endl;
 		}
 		else
 		{
@@ -454,7 +457,7 @@ int main(int argc, char** argv)
 	if(params->computeResidual)
 	{
 		meanResidualFile.open(params->meanResidualFileName);
-		meanResidualFile << "stamp,linear_speed,linear_acceleration,angular_speed,angular_acceleration,residual" << std::endl;
+		meanResidualFile << "stamp,x,y,z,linear_speed,linear_acceleration,angular_speed,angular_acceleration,residual" << std::endl;
 	}
 	
 	std::thread mapperShutdownThread;

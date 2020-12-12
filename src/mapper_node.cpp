@@ -264,13 +264,16 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 				matches = matcher->findClosests(inputInMapFrame);
 			}
 
-			PM::Parameters outlierParams;
-			outlierParams["ratio"] = "1.0";
-			std::shared_ptr<PM::OutlierFilter> outlierFilter = PM::get().OutlierFilterRegistrar.create("TrimmedDistOutlierFilter", outlierParams);
-			PM::OutlierWeights outlierWeights = outlierFilter->compute(inputInMapFrame, map, matches);
-			typename PM::ErrorMinimizer::ErrorElements errorElements(inputInMapFrame, map, outlierWeights, matches);
-			float meanResidual = (errorElements.reading.features - errorElements.reference.features).colwise().norm().mean();
-			
+			double error = 0;
+			for(int i = 0; i < matches.ids.cols(); i++)
+			{	Eigen::Vector3f inputPoint = inputInMapFrame.features.col(i).head(3);
+				Eigen::Vector3f mapPoint = map.features.col(matches.ids(0, i)).head(3);
+				Eigen::Vector3f normal = map.getDescriptorViewByName("normals").col(matches.ids(0, i));
+				normal /= normal.norm();
+				error += std::abs((mapPoint - inputPoint).dot(normal));
+			}
+			float meanResidual = error / matches.ids.cols();
+
 			std_msgs::Float32 residualMsg;
 			residualMsg.data = meanResidual;
 			residualPublisher.publish(residualMsg);

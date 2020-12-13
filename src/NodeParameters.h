@@ -56,9 +56,8 @@ public:
 	bool useSkewWeights;
 	bool isMapping;
 	int skewModel;
-	float cornerPointWeight;
-	float weightQuantile;
-	float rangePrecision;
+	float cornerPointUncertainty;
+	float uncertaintyQuantile;
 	
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

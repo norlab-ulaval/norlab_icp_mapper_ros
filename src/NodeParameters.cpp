@@ -49,9 +49,8 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("use_skew_weights", useSkewWeights, false);
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 	nodeHandle.param<int>("skew_model", skewModel, 0);
-	nodeHandle.param<float>("corner_point_weight", cornerPointWeight, 1.0);
-	nodeHandle.param<float>("weight_quantile", weightQuantile, 0.0);
-	nodeHandle.param<float>("range_precision", rangePrecision, 0.02);
+	nodeHandle.param<float>("corner_point_uncertainty", cornerPointUncertainty, 1.0);
+	nodeHandle.param<float>("uncertainty_quantile", uncertaintyQuantile, 0.0);
 }
 
 void NodeParameters::validateParameters()

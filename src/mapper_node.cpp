@@ -151,64 +151,52 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 			inertiaMeasurementsMutex.unlock();
 		}
 
-		std::string linearSpeedNoisesX = "";
-		std::string linearSpeedNoisesY = "";
-		std::string linearSpeedNoisesZ = "";
-		std::string linearAccelerationNoisesX = "";
-		std::string linearAccelerationNoisesY = "";
-		std::string linearAccelerationNoisesZ = "";
-		std::string angularSpeedNoisesX = "";
-		std::string angularSpeedNoisesY = "";
-		std::string angularSpeedNoisesZ = "";
-		std::string angularAccelerationNoisesX = "";
-		std::string angularAccelerationNoisesY = "";
-		std::string angularAccelerationNoisesZ = "";
+		std::string linearSpeedsX = "";
+		std::string linearSpeedsY = "";
+		std::string linearSpeedsZ = "";
+		std::string linearAccelerationsX = "";
+		std::string linearAccelerationsY = "";
+		std::string linearAccelerationsZ = "";
+		std::string angularSpeedsX = "";
+		std::string angularSpeedsY = "";
+		std::string angularSpeedsZ = "";
+		std::string angularAccelerationsX = "";
+		std::string angularAccelerationsY = "";
+		std::string angularAccelerationsZ = "";
 		std::string measureTimes = "";
 		if(cloudInertiaMeasurements.size() > 0)
 		{
 			for(int i = 0; i < cloudInertiaMeasurements.size(); i++)
 			{
-				linearSpeedNoisesX += std::to_string((std::log(std::fabs(cloudInertiaMeasurements[i].linear_velocity.x) + 0.001) / 65.0) + 0.105) +
-								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-				linearSpeedNoisesY += std::to_string((std::log(std::fabs(cloudInertiaMeasurements[i].linear_velocity.y) + 0.001) / 65.0) + 0.105) +
-								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-				linearSpeedNoisesZ += std::to_string((std::log(std::fabs(cloudInertiaMeasurements[i].linear_velocity.z) + 0.001) / 65.0) + 0.105) +
-								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-				linearAccelerationNoisesX += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].linear_acceleration.x)) +
-								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-				linearAccelerationNoisesY += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].linear_acceleration.y)) +
-										 (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-				linearAccelerationNoisesZ += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].linear_acceleration.z)) +
-										 (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-				angularSpeedNoisesX += std::to_string(std::pow(std::fabs(cloudInertiaMeasurements[i].angular_velocity.x)/65.0, 2)) +
-								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-				angularSpeedNoisesY += std::to_string(std::pow(std::fabs(cloudInertiaMeasurements[i].angular_velocity.y)/65.0, 2)) +
-								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-				angularSpeedNoisesZ += std::to_string(std::pow(std::fabs(cloudInertiaMeasurements[i].angular_velocity.z)/65.0, 2)) +
-								  (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-				angularAccelerationNoisesX += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].angular_acceleration.x)) +
-										 (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-				angularAccelerationNoisesY += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].angular_acceleration.y)) +
-										 (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-				angularAccelerationNoisesZ += std::to_string(0.0f * std::fabs(cloudInertiaMeasurements[i].angular_acceleration.z)) +
-										 (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				linearSpeedsX += std::to_string(cloudInertiaMeasurements[i].linear_velocity.x) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				linearSpeedsY += std::to_string(cloudInertiaMeasurements[i].linear_velocity.y) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				linearSpeedsZ += std::to_string(cloudInertiaMeasurements[i].linear_velocity.z) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				linearAccelerationsX += std::to_string(cloudInertiaMeasurements[i].linear_acceleration.x) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				linearAccelerationsY += std::to_string(cloudInertiaMeasurements[i].linear_acceleration.y) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				linearAccelerationsZ += std::to_string(cloudInertiaMeasurements[i].linear_acceleration.z) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularSpeedsX += std::to_string(cloudInertiaMeasurements[i].angular_velocity.x) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularSpeedsY += std::to_string(cloudInertiaMeasurements[i].angular_velocity.y) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularSpeedsZ += std::to_string(cloudInertiaMeasurements[i].angular_velocity.z) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularAccelerationsX += std::to_string(cloudInertiaMeasurements[i].angular_acceleration.x) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularAccelerationsY += std::to_string(cloudInertiaMeasurements[i].angular_acceleration.y) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+				angularAccelerationsZ += std::to_string(cloudInertiaMeasurements[i].angular_acceleration.z) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
 				measureTimes += std::to_string((cloudInertiaMeasurements[i].header.stamp - timeStamp).toSec()) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
 			}
 		}
 		else
 		{
-			linearSpeedNoisesX = "0";
-			linearSpeedNoisesY = "0";
-			linearSpeedNoisesZ = "0";
-			linearAccelerationNoisesX = "0";
-			linearAccelerationNoisesY = "0";
-			linearAccelerationNoisesZ = "0";
-			angularSpeedNoisesX = "0";
-			angularSpeedNoisesY = "0";
-			angularSpeedNoisesZ = "0";
-			angularAccelerationNoisesX = "0";
-			angularAccelerationNoisesY = "0";
-			angularAccelerationNoisesZ = "0";
+			linearSpeedsX = "0";
+			linearSpeedsY = "0";
+			linearSpeedsZ = "0";
+			linearAccelerationsX = "0";
+			linearAccelerationsY = "0";
+			linearAccelerationsZ = "0";
+			angularSpeedsX = "0";
+			angularSpeedsY = "0";
+			angularSpeedsZ = "0";
+			angularAccelerationsX = "0";
+			angularAccelerationsY = "0";
+			angularAccelerationsZ = "0";
 			measureTimes = "0";
 		}
 		
@@ -222,9 +210,9 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 			
 			mapper->processInput(input, sensorToMapBeforeUpdate,
 								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())),
-								 linearSpeedNoisesX, linearSpeedNoisesY, linearSpeedNoisesZ, linearAccelerationNoisesX, linearAccelerationNoisesY,
-								 linearAccelerationNoisesZ, angularSpeedNoisesX, angularSpeedNoisesY, angularSpeedNoisesZ, angularAccelerationNoisesX,
-								 angularAccelerationNoisesY, angularAccelerationNoisesZ, measureTimes);
+								 linearSpeedsX, linearSpeedsY, linearSpeedsZ, linearAccelerationsX, linearAccelerationsY,
+								 linearAccelerationsZ, angularSpeedsX, angularSpeedsY, angularSpeedsZ, angularAccelerationsX,
+								 angularAccelerationsY, angularAccelerationsZ, measureTimes);
 			sensorToMapAfterUpdate = mapper->getSensorPose();
 
 			PM::DataPoints inputInMapFrame = transformation->compute(input, sensorToMapAfterUpdate);
@@ -310,9 +298,9 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		{
 			mapper->processInput(input, sensorToMapBeforeUpdate,
 								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())),
-								 linearSpeedNoisesX, linearSpeedNoisesY, linearSpeedNoisesZ, linearAccelerationNoisesX, linearAccelerationNoisesY,
-								 linearAccelerationNoisesZ, angularSpeedNoisesX, angularSpeedNoisesY, angularSpeedNoisesZ, angularAccelerationNoisesX,
-								 angularAccelerationNoisesY, angularAccelerationNoisesZ, measureTimes);
+								 linearSpeedsX, linearSpeedsY, linearSpeedsZ, linearAccelerationsX, linearAccelerationsY,
+								 linearAccelerationsZ, angularSpeedsX, angularSpeedsY, angularSpeedsZ, angularAccelerationsX,
+								 angularAccelerationsY, angularAccelerationsZ, measureTimes);
 			sensorToMapAfterUpdate = mapper->getSensorPose();
 		}
 

@@ -54,10 +54,12 @@ public:
 	bool recordInertia;
 	bool perpendicularResidual;
 	bool useSkewWeights;
+	bool softUncertaintyThreshold;
 	bool isMapping;
 	int skewModel;
 	float cornerPointUncertainty;
 	float uncertaintyQuantile;
+	float uncertaintyThreshold;
 	
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

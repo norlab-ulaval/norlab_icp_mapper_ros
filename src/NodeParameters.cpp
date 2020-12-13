@@ -47,10 +47,12 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("record_inertia", recordInertia, false);
 	nodeHandle.param<bool>("perpendicular_residual", perpendicularResidual, false);
 	nodeHandle.param<bool>("use_skew_weights", useSkewWeights, false);
+	nodeHandle.param<bool>("soft_uncertainty_threshold", softUncertaintyThreshold, true);
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 	nodeHandle.param<int>("skew_model", skewModel, 0);
-	nodeHandle.param<float>("corner_point_uncertainty", cornerPointUncertainty, 1.0);
-	nodeHandle.param<float>("uncertainty_quantile", uncertaintyQuantile, 0.0);
+	nodeHandle.param<float>("corner_point_uncertainty", cornerPointUncertainty, 0.0);
+	nodeHandle.param<float>("uncertainty_quantile", uncertaintyQuantile, 1.0);
+	nodeHandle.param<float>("uncertainty_threshold", uncertaintyThreshold, 0.03);
 }
 
 void NodeParameters::validateParameters()

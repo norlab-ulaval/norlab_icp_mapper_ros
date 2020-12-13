@@ -441,7 +441,8 @@ int main(int argc, char** argv)
 										  params->mapUpdateOverlap, params->mapUpdateDelay, params->mapUpdateDistance, params->minDistNewPoint,
 										  params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
 										  params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
-										  params->useSkewWeights, params->isMapping, params->skewModel, params->cornerPointUncertainty, params->uncertaintyQuantile));
+										  params->useSkewWeights, params->isMapping, params->skewModel, params->cornerPointUncertainty, params->uncertaintyQuantile,
+										  params->softUncertaintyThreshold, params->uncertaintyThreshold));
 	
 	loadInitialMap();
 	

@@ -33,6 +33,7 @@ std::mutex mapTfLock;
 std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;
 std::mutex idleTimeLock;
 std::ofstream meanResidualFile;
+std::ofstream inertiaFile;
 ros::Publisher residualPublisher;
 std::mutex inertiaMeasurementsMutex;
 std::list<imu_odom::Inertia> inertiaMeasurements;
@@ -431,6 +432,10 @@ void inertiaCallback(const imu_odom::Inertia& msg)
 	inertiaMeasurementsMutex.lock();
 	inertiaMeasurements.emplace_back(msg);
 	inertiaMeasurementsMutex.unlock();
+	if(params->recordInertia)
+	{
+		inertiaFile << msg.header.stamp << "," << msg.linear_velocity.x << "," << msg.linear_velocity.y << "," << msg.linear_velocity.z << "," << msg.linear_acceleration.x << "," << msg.linear_acceleration.y << "," << msg.linear_acceleration.z << "," << msg.angular_velocity.x << "," << msg.angular_velocity.y << "," << msg.angular_velocity.z << "," << msg.angular_acceleration.x << "," << msg.angular_acceleration.y << "," << msg.angular_acceleration.z << std::endl;
+	}
 }
 
 int main(int argc, char** argv)
@@ -461,6 +466,12 @@ int main(int argc, char** argv)
 	{
 		meanResidualFile.open(params->meanResidualFileName);
 		meanResidualFile << "stamp,x,y,z,linear_speed,linear_acceleration,angular_speed,angular_acceleration,residual" << std::endl;
+	}
+
+	if(params->recordInertia)
+	{
+		inertiaFile.open(params->inertiaFileName);
+		inertiaFile << "stamp,linear_velocity_x,linear_velocity_y,linear_velocity_z,linear_acceleration_x,linear_acceleration_y,linear_acceleration_z,angular_velocity_x,angular_velocity_y,angular_velocity_z,angular_acceleration_x,angular_acceleration_y,angular_acceleration_z" << std::endl;
 	}
 	
 	std::thread mapperShutdownThread;
@@ -522,6 +533,7 @@ int main(int argc, char** argv)
 	}
 	
 	meanResidualFile.close();
+	inertiaFile.close();
 	
 	std::ofstream finalTransformationFile;
 	finalTransformationFile.open(params->finalTransformationFileName, std::ios::app);

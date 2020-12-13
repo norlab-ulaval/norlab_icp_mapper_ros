@@ -31,6 +31,7 @@ public:
 	std::string mapUpdateCondition;
 	std::string meanResidualFileName;
 	std::string finalTransformationFileName;
+	std::string inertiaFileName;
 	float mapUpdateOverlap;
 	float mapUpdateDelay;
 	float mapUpdateDistance;
@@ -50,6 +51,7 @@ public:
 	bool isOnline;
 	bool computeProbDynamic;
 	bool computeResidual;
+	bool recordInertia;
 	bool perpendicularResidual;
 	bool useSkewWeights;
 	bool isMapping;

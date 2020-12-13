@@ -24,6 +24,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<std::string>("map_update_condition", mapUpdateCondition, "overlap");
 	nodeHandle.param<std::string>("mean_residual_file_name", meanResidualFileName, "residual.csv");
 	nodeHandle.param<std::string>("final_transformation_file_name", finalTransformationFileName, "final_transformation.txt");
+	nodeHandle.param<std::string>("inertia_file_name", inertiaFileName, "inertia.txt");
 	nodeHandle.param<float>("map_update_overlap", mapUpdateOverlap, 0.9);
 	nodeHandle.param<float>("map_update_delay", mapUpdateDelay, 1);
 	nodeHandle.param<float>("map_update_distance", mapUpdateDistance, 0.5);
@@ -43,6 +44,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("is_online", isOnline, true);
 	nodeHandle.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
 	nodeHandle.param<bool>("compute_residual", computeResidual, false);
+	nodeHandle.param<bool>("record_inertia", recordInertia, false);
 	nodeHandle.param<bool>("perpendicular_residual", perpendicularResidual, false);
 	nodeHandle.param<bool>("use_skew_weights", useSkewWeights, false);
 	nodeHandle.param<bool>("is_mapping", isMapping, true);

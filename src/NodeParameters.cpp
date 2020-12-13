@@ -24,7 +24,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<std::string>("map_update_condition", mapUpdateCondition, "overlap");
 	nodeHandle.param<std::string>("mean_residual_file_name", meanResidualFileName, "residual.csv");
 	nodeHandle.param<std::string>("final_transformation_file_name", finalTransformationFileName, "final_transformation.txt");
-	nodeHandle.param<std::string>("inertia_file_name", inertiaFileName, "inertia.txt");
+	nodeHandle.param<std::string>("inertia_file_name", inertiaFileName, "inertia.csv");
 	nodeHandle.param<float>("map_update_overlap", mapUpdateOverlap, 0.9);
 	nodeHandle.param<float>("map_update_delay", mapUpdateDelay, 1);
 	nodeHandle.param<float>("map_update_distance", mapUpdateDistance, 0.5);

@@ -259,7 +259,14 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 				Eigen::Vector3f mapPoint = map.features.col(matches.ids(0, i)).head(3);
 				Eigen::Vector3f normal = map.getDescriptorViewByName("normals").col(matches.ids(0, i));
 				normal /= normal.norm();
-				error += std::abs((mapPoint - inputPoint).dot(normal));
+				if(params->pointToPlaneResidual)
+				{
+					error += std::abs((mapPoint - inputPoint).dot(normal));
+				}
+				else
+				{
+					error += (mapPoint - inputPoint).norm();
+				}
 			}
 			float meanResidual = error / matches.ids.cols();
 

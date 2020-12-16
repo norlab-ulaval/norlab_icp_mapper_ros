@@ -53,6 +53,7 @@ public:
 	bool computeResidual;
 	bool recordInertia;
 	bool perpendicularResidual;
+	bool pointToPlaneResidual;
 	bool useSkewWeights;
 	bool softUncertaintyThreshold;
 	bool isMapping;

@@ -55,6 +55,7 @@ public:
 	bool perpendicularResidual;
 	bool pointToPlaneResidual;
 	bool useSkewWeights;
+	bool afterDeskewing;
 	bool softUncertaintyThreshold;
 	bool isMapping;
 	int skewModel;

@@ -48,6 +48,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("perpendicular_residual", perpendicularResidual, false);
 	nodeHandle.param<bool>("point_to_plane_residual", pointToPlaneResidual, true);
 	nodeHandle.param<bool>("use_skew_weights", useSkewWeights, false);
+	nodeHandle.param<bool>("after_deskewing", afterDeskewing, true);
 	nodeHandle.param<bool>("soft_uncertainty_threshold", softUncertaintyThreshold, true);
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 	nodeHandle.param<int>("skew_model", skewModel, 0);

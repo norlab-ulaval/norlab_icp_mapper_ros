@@ -128,7 +128,7 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 			inertiaMeasurementsMutex.lock();
 			ros::Time latestInertiaMeasurementTime = inertiaMeasurements.back().header.stamp;
 			inertiaMeasurementsMutex.unlock();
-			while(latestInertiaMeasurementTime < (timeStamp + ros::Duration(0.1)))
+			while(ros::ok() && latestInertiaMeasurementTime < (timeStamp + ros::Duration(0.1)))
 			{
 				ros::Duration(0.01).sleep();
 				inertiaMeasurementsMutex.lock();

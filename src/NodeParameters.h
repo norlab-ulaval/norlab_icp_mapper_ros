@@ -60,8 +60,9 @@ public:
 	bool isMapping;
 	int skewModel;
 	float cornerPointUncertainty;
-	float uncertaintyQuantile;
 	float uncertaintyThreshold;
+	float uncertaintyQuantile;
+	float binaryUncertaintyThreshold;
 	
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

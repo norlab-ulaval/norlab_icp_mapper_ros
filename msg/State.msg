@@ -5,9 +5,11 @@ uint8 SOURCE_IMU = 1 # Message contains orientation, linear acceleration and ang
 std_msgs/Header header
 uint8 source
 
+# GPS data
 geometry_msgs/Point position
 float64[9] position_covariance # Row-major x, y, z
 
+# IMU data
 geometry_msgs/Quaternion orientation
 float64[9] orientation_covariance # Row major about x, y, z axes
 

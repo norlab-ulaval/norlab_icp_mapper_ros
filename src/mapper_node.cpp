@@ -39,7 +39,7 @@ std::mutex inertiaMeasurementsMutex;
 std::list<imu_odom::Inertia> inertiaMeasurements;
 PM::ICP icp;
 
-bool firstIcpOdomSet = false;
+int nbRegistrations = 0;
 PM::TransformationParameters firstIcpOdom;
 PM::TransformationParameters lastIcpOdom;
 
@@ -204,7 +204,7 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 		
 		PM::TransformationParameters sensorToMapAfterUpdate;
-		if(params->computeResidual && cloudInertiaMeasurements.size() > 0 && firstIcpOdomSet)
+		if(params->computeResidual && cloudInertiaMeasurements.size() > 0 && nbRegistrations > 0)
 		{
 			PM::DataPoints map = mapper->getMap();
 			
@@ -321,9 +321,8 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, params->sensorFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 		
-		if(!firstIcpOdomSet)
+		if((++nbRegistrations) == 3)
 		{
-			firstIcpOdomSet = true;
 			firstIcpOdom = robotToMap;
 		}
 		lastIcpOdom = robotToMap;

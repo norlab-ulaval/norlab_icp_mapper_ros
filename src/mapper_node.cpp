@@ -321,7 +321,7 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, params->sensorFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 		
-		if((++nbRegistrations) == 3)
+		if((++nbRegistrations) == 6)
 		{
 			firstIcpOdom = robotToMap;
 		}

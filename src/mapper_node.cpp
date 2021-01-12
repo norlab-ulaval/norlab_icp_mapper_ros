@@ -165,6 +165,25 @@ void stateCallback(const norlab_icp_mapper_ros::State& stateMsgIn)
 		estimatedState.angularVelocityTimeStamp = std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(messageStamp.toNSec()));
 		stateMutex.unlock();
 	}
+	else if(stateMsgIn.source == norlab_icp_mapper_ros::State::SOURCE_IMU_GPS)
+	{
+		stateMutex.lock();
+		estimatedState.position = Eigen::Matrix<T, 3, 1>(stateMsgIn.position.x, stateMsgIn.position.y, stateMsgIn.position.z);
+		estimatedState.positionCovariance = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(stateMsgIn.position_covariance.data()).cast<T>();
+		estimatedState.positionTimeStamp = std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(messageStamp.toNSec()));
+		estimatedState.orientation =
+				Eigen::Matrix<T, 4, 1>(stateMsgIn.orientation.x, stateMsgIn.orientation.y, stateMsgIn.orientation.z, stateMsgIn.orientation.w);
+		estimatedState.orientationCovariance = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(stateMsgIn.orientation_covariance.data()).cast<T>();
+		estimatedState.orientationTimeStamp = std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(messageStamp.toNSec()));
+		estimatedState.linearAcceleration =
+				Eigen::Matrix<T, 3, 1>(stateMsgIn.linear_acceleration.x, stateMsgIn.linear_acceleration.y, stateMsgIn.linear_acceleration.z);
+		estimatedState.linearAccelerationCovariance = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(stateMsgIn.linear_acceleration_covariance.data()).cast<T>();
+		estimatedState.linearAccelerationTimeStamp = std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(messageStamp.toNSec()));
+		estimatedState.angularVelocity = Eigen::Matrix<T, 3, 1>(stateMsgIn.angular_velocity.x, stateMsgIn.angular_velocity.y, stateMsgIn.angular_velocity.z);
+		estimatedState.angularVelocityCovariance = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(stateMsgIn.angular_velocity_covariance.data()).cast<T>();
+		estimatedState.angularVelocityTimeStamp = std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(messageStamp.toNSec()));
+		stateMutex.unlock();
+	}
 }
 
 bool reloadYamlConfigCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)

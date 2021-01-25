@@ -46,6 +46,7 @@ public:
 	bool isOnline;
 	bool computeProbDynamic;
 	bool isMapping;
+	bool isCalibrating;
 	
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

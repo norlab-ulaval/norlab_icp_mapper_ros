@@ -40,7 +40,7 @@ void loadInitialMap()
 		}
 		
 		initialMap = transformation->compute(initialMap, params->initialMapPose);
-		mapper->setMap(initialMap, PM::TransformationParameters::Identity(euclideanDim + 1, euclideanDim + 1));
+		mapper->setInitialMap(initialMap);
 	}
 }
 

@@ -7,9 +7,9 @@ class Trajectory
 {
 public:
 	Trajectory(int dimension);
-	
+
 	void addPoint(Vector point);
-	
+
 	void save(std::string filename);
 
 private:

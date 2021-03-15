@@ -8,11 +8,11 @@ class NodeParameters
 {
 private:
 	void retrieveParameters(const ros::NodeHandle& nodeHandle);
-	
+
 	void validateParameters();
-	
+
 	void parseComplexParameters();
-	
+
 	void parseInitialMapPose();
 
 public:
@@ -46,6 +46,7 @@ public:
 	bool isOnline;
 	bool computeProbDynamic;
 	bool isMapping;
-	
+	bool saveMapCellsOnHardDrive;
+
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

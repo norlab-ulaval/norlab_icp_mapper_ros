@@ -1,26 +1,25 @@
+#ifndef NODE_PARAMETERS_H
+#define NODE_PARAMETERS_H
+
 #include <ros/ros.h>
 #include <norlab_icp_mapper/Mapper.h>
-
-typedef norlab_icp_mapper::PM PM;
-typedef norlab_icp_mapper::T T;
 
 class NodeParameters
 {
 private:
+	typedef PointMatcher<float> PM;
+
 	void retrieveParameters(const ros::NodeHandle& nodeHandle);
-
-	void validateParameters();
-
+	void validateParameters() const;
 	void parseComplexParameters();
-
-	void parseInitialMapPose();
+	void parseInitialRobotPose();
 
 public:
 	std::string odomFrame;
 	std::string robotFrame;
 	std::string initialMapFileName;
-	std::string initialMapPoseString;
-	PM::TransformationParameters initialMapPose;
+	std::string initialRobotPoseString;
+	PM::TransformationParameters initialRobotPose;
 	std::string finalMapFileName;
 	std::string finalTrajectoryFileName;
 	std::string icpConfig;
@@ -50,3 +49,5 @@ public:
 
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };
+
+#endif

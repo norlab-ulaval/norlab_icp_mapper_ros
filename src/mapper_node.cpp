@@ -277,7 +277,7 @@ int main(int argc, char** argv)
 																					  params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic,
 																					  params->beamHalfAngle, params->epsilonA, params->epsilonD, params->alpha,
 																					  params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
-																					  params->isMapping, params->saveMapCellsOnHardDrive));
+																					  params->isMapping, params->saveMapCellsOnHardDrive, params->csvFileName));
 
 	if(!params->initialMapFileName.empty())
 	{

@@ -40,6 +40,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 	nodeHandle.param<bool>("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive, true);
+	nodeHandle.param<std::string>("csv_file_name", csvFileName, "log.csv");
 }
 
 void NodeParameters::validateParameters() const

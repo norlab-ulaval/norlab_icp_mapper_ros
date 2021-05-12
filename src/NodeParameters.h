@@ -46,6 +46,7 @@ public:
 	bool computeProbDynamic;
 	bool isMapping;
 	bool saveMapCellsOnHardDrive;
+	std::string csvFileName;
 
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

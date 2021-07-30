@@ -29,6 +29,8 @@ std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;
 std::mutex idleTimeLock;
 bool hasToSetRobotPose;
 PM::TransformationParameters robotPoseToSet;
+PM::TransformationParameters prevRobotPoseToSet;
+ros::Time prevTime;
 
 void saveMap(const std::string& mapFileName)
 {
@@ -117,6 +119,22 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 
 		robotTrajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
 		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, "map", params->robotFrame, timeStamp);
+
+		if(!prevTime.isZero())
+		{
+		    PM::Vector linearDisp;
+		    linearDisp = robotToMap.topRightCorner(input.getEuclideanDim(), 1) -
+		            prevRobotPoseToSet.topRightCorner(input.getEuclideanDim(), 1);
+		    float deltaTime = (timeStamp - prevTime).toSec();
+		    PM::Vector linearVel = linearDisp /= deltaTime;
+            odomMsgOut.twist.twist.linear.x = linearVel(0);
+            odomMsgOut.twist.twist.linear.y = linearVel(1);
+            odomMsgOut.twist.twist.linear.z = linearVel(2);
+		}
+
+		prevRobotPoseToSet = robotToMap;
+		prevTime = timeStamp;
+
 		odomPublisher.publish(odomMsgOut);
 
 		idleTimeLock.lock();

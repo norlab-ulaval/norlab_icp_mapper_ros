@@ -317,22 +317,22 @@ int main(int argc, char** argv)
 	tf2_ros::TransformListener tfListener(*tfBuffer);
 	tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
 
+	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
+	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
+
 	ros::Subscriber sub;
 	if(params->is3D)
 	{
-		sub = n.subscribe("points_in", messageQueueSize, pointCloud2Callback);
 		robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
 		odomToMap = PM::Matrix::Identity(4, 4);
+		sub = n.subscribe("points_in", messageQueueSize, pointCloud2Callback);
 	}
 	else
 	{
-		sub = n.subscribe("points_in", messageQueueSize, laserScanCallback);
 		robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
 		odomToMap = PM::Matrix::Identity(3, 3);
+		sub = n.subscribe("points_in", messageQueueSize, laserScanCallback);
 	}
-
-	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
-	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
 
 	ros::ServiceServer reloadYamlConfigService = n.advertiseService("reload_yaml_config", reloadYamlConfigCallback);
 	ros::ServiceServer saveMapService = n.advertiseService("save_map", saveMapCallback);

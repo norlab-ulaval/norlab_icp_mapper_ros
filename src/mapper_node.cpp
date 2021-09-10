@@ -29,8 +29,8 @@ std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;
 std::mutex idleTimeLock;
 bool hasToSetRobotPose;
 PM::TransformationParameters robotPoseToSet;
-PM::TransformationParameters prevRobotPoseToSet;
-ros::Time prevTime;
+PM::TransformationParameters previousRobotToMap;
+ros::Time previousTimeStamp;
 
 void saveMap(const std::string& mapFileName)
 {
@@ -120,20 +120,17 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		robotTrajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
 		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, "map", params->robotFrame, timeStamp);
 
-		if(!prevTime.isZero())
+		if(!previousTimeStamp.isZero())
 		{
-		    PM::Vector linearDisp;
-		    linearDisp = robotToMap.topRightCorner(input.getEuclideanDim(), 1) -
-		            prevRobotPoseToSet.topRightCorner(input.getEuclideanDim(), 1);
-		    float deltaTime = (timeStamp - prevTime).toSec();
-		    PM::Vector linearVel = linearDisp /= deltaTime;
-            odomMsgOut.twist.twist.linear.x = linearVel(0);
-            odomMsgOut.twist.twist.linear.y = linearVel(1);
-            odomMsgOut.twist.twist.linear.z = linearVel(2);
+			Eigen::Vector3f linearDisplacement = robotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
+			float deltaTime = (timeStamp - previousTimeStamp).toSec();
+			Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
+			odomMsgOut.twist.twist.linear.x = linearVelocity(0);
+			odomMsgOut.twist.twist.linear.y = linearVelocity(1);
+			odomMsgOut.twist.twist.linear.z = linearVelocity(2);
 		}
-
-		prevRobotPoseToSet = robotToMap;
-		prevTime = timeStamp;
+		previousTimeStamp = timeStamp;
+		previousRobotToMap = robotToMap;
 
 		odomPublisher.publish(odomMsgOut);
 
@@ -178,7 +175,7 @@ bool saveMapCallback(norlab_icp_mapper_ros::SaveMap::Request& req, norlab_icp_ma
 	}
 }
 
-PM::TransformationParameters rosMsgToPointMatcherPose(const geometry_msgs::Pose& pose)
+PM::TransformationParameters rosMsgToPointMatcherPose(const geometry_msgs::Pose& pose) // TODO: put this in libpointmatcher_ros
 {
 	Eigen::Vector3f epsilon(pose.orientation.x, pose.orientation.y, pose.orientation.z);
 	float eta = pose.orientation.w;

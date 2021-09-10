@@ -12,6 +12,7 @@
 #include <mutex>
 #include <thread>
 #include <norlab_icp_mapper/Trajectory.h>
+#include <diagnostic_msgs/DiagnosticArray.h>
 
 typedef PointMatcher<float> PM;
 
@@ -22,6 +23,7 @@ std::unique_ptr<Trajectory> robotTrajectory;
 PM::TransformationParameters odomToMap;
 ros::Publisher mapPublisher;
 ros::Publisher odomPublisher;
+ros::Publisher diagnosticPublisher;
 std::unique_ptr<tf2_ros::Buffer> tfBuffer;
 std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
@@ -31,6 +33,7 @@ bool hasToSetRobotPose;
 PM::TransformationParameters robotPoseToSet;
 PM::TransformationParameters previousRobotToMap;
 ros::Time previousTimeStamp;
+unsigned previousSequenceNumber;
 
 void saveMap(const std::string& mapFileName)
 {
@@ -93,8 +96,22 @@ PM::TransformationParameters findTransform(const std::string& sourceFrame, const
 	return PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(tf, transformDimension);
 }
 
-void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const ros::Time& timeStamp)
+void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const ros::Time& timeStamp, const unsigned& sequenceNumber)
 {
+	diagnostic_msgs::DiagnosticStatus statusMsg;
+	statusMsg.hardware_id = "N/A";
+	statusMsg.name = "ICP mapper status";
+
+	diagnostic_msgs::KeyValue currentRosTimeKV;
+	currentRosTimeKV.key = "ROS time now (approx.)";
+	currentRosTimeKV.value = std::to_string(ros::Time::now().toSec());
+	statusMsg.values.push_back(currentRosTimeKV);
+
+	diagnostic_msgs::KeyValue currentCloudStampKV;
+	currentCloudStampKV.key = "Msg. stamp";
+	currentCloudStampKV.value = std::to_string(timeStamp.toSec());
+	statusMsg.values.push_back(currentCloudStampKV);
+
 	try
 	{
 		PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
@@ -107,7 +124,8 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 			hasToSetRobotPose = false;
 		}
 
-		mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+		norlab_icp_mapper::DiagnosticInformation info = mapper->processInput(input, sensorToMapBeforeUpdate,
+																			 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
 		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
 
 		mapTfLock.lock();
@@ -123,7 +141,7 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		if(!previousTimeStamp.isZero())
 		{
 			Eigen::Vector3f linearDisplacement = robotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
-			float deltaTime = (timeStamp - previousTimeStamp).toSec();
+			float deltaTime = (float)(timeStamp - previousTimeStamp).toSec();
 			Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
 			odomMsgOut.twist.twist.linear.x = linearVelocity(0);
 			odomMsgOut.twist.twist.linear.y = linearVelocity(1);
@@ -137,21 +155,95 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		idleTimeLock.lock();
 		lastTimeInputWasProcessed = std::chrono::steady_clock::now();
 		idleTimeLock.unlock();
+
+		statusMsg.level = diagnostic_msgs::DiagnosticStatus::OK;
+		statusMsg.message = "ICP convergence OK.";
+
+		diagnostic_msgs::KeyValue nbPointsInputBeforeFilteringKV;
+		nbPointsInputBeforeFilteringKV.key = "Input points before filtering";
+		nbPointsInputBeforeFilteringKV.value = std::to_string(info.nbPointsInputBeforeFiltering);
+		statusMsg.values.push_back(nbPointsInputBeforeFilteringKV);
+
+		diagnostic_msgs::KeyValue nbPointsInputAfterFilteringKV;
+		nbPointsInputAfterFilteringKV.key = "Input points after filtering";
+		nbPointsInputAfterFilteringKV.value = std::to_string(info.nbPointsInputAfterFiltering);
+		statusMsg.values.push_back(nbPointsInputAfterFilteringKV);
+
+		diagnostic_msgs::KeyValue inputFilteringTimeKV;
+		inputFilteringTimeKV.key = "Input filters duration [s]";
+		inputFilteringTimeKV.value = std::to_string(info.inputFilteringTime);
+		statusMsg.values.push_back(inputFilteringTimeKV);
+
+		diagnostic_msgs::KeyValue nbPointsReferenceKV;
+		nbPointsReferenceKV.key = "Reference points";
+		nbPointsReferenceKV.value = std::to_string(info.nbPointsReference);
+		statusMsg.values.push_back(nbPointsReferenceKV);
+
+		diagnostic_msgs::KeyValue estimatedOverlapKV;
+		estimatedOverlapKV.key = "Estimated overlap";
+		estimatedOverlapKV.value = std::to_string(info.estimatedOverlap);
+		statusMsg.values.push_back(estimatedOverlapKV);
+
+		diagnostic_msgs::KeyValue processingTimeKV;
+		processingTimeKV.key = "Processing time";
+		processingTimeKV.value = std::to_string(info.processingTime);
+		statusMsg.values.push_back(processingTimeKV);
+
+		diagnostic_msgs::KeyValue realTimeCapabilityKV;
+		realTimeCapabilityKV.key = "Real-time capability %";
+		realTimeCapabilityKV.value = std::to_string(info.processingTimePercentage * (float)(sequenceNumber - previousSequenceNumber));
+		statusMsg.values.push_back(realTimeCapabilityKV);
+	}
+	catch(const tf2::ExtrapolationException& ex)
+	{
+		ROS_WARN("%s", ex.what());
+
+		statusMsg.level = diagnostic_msgs::DiagnosticStatus::ERROR;
+		statusMsg.message = "TF Extrapolation Exception: " + std::string(ex.what());
 	}
 	catch(const tf2::TransformException& ex)
 	{
 		ROS_WARN("%s", ex.what());
+
+		statusMsg.level = diagnostic_msgs::DiagnosticStatus::ERROR;
+		statusMsg.message = "Other TF Exception: " + std::string(ex.what());
 	}
+	catch(const PM::ConvergenceError& ex)
+	{
+		ROS_WARN("%s", ex.what());
+
+		statusMsg.level = diagnostic_msgs::DiagnosticStatus::ERROR;
+		statusMsg.message = "ICP failed to converge: " + std::string(ex.what());
+	}
+	catch(const std::exception& ex)
+	{
+		ROS_WARN("%s", ex.what());
+
+		statusMsg.level = diagnostic_msgs::DiagnosticStatus::ERROR;
+		statusMsg.message = "Unexpected exception: " + std::string(ex.what());
+	}
+	catch(...)
+	{
+		ROS_WARN("%s", "Unexpected exception");
+
+		statusMsg.level = diagnostic_msgs::DiagnosticStatus::ERROR;
+		statusMsg.message = "Unexpected exception";
+	}
+
+	diagnostic_msgs::DiagnosticArray diagnosticMsg;
+	diagnosticMsg.header.stamp = timeStamp;
+	diagnosticMsg.status.push_back(statusMsg);
+	diagnosticPublisher.publish(diagnosticMsg);
 }
 
 void pointCloud2Callback(const sensor_msgs::PointCloud2& cloudMsgIn)
 {
-	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp, cloudMsgIn.header.seq);
 }
 
 void laserScanCallback(const sensor_msgs::LaserScan& scanMsgIn)
 {
-	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp, scanMsgIn.header.seq);
 }
 
 bool reloadYamlConfigCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
@@ -319,6 +411,7 @@ int main(int argc, char** argv)
 
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
+	diagnosticPublisher = n.advertise<diagnostic_msgs::DiagnosticArray>("icp_diagnostics", 2, true);
 
 	ros::Subscriber sub;
 	if(params->is3D)

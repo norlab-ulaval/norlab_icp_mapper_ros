@@ -189,10 +189,14 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		processingTimeKV.value = std::to_string(info.processingTime);
 		statusMsg.values.push_back(processingTimeKV);
 
-		diagnostic_msgs::KeyValue realTimeCapabilityKV;
-		realTimeCapabilityKV.key = "Real-time capability %";
-		realTimeCapabilityKV.value = std::to_string(info.processingTimePercentage * (float)(sequenceNumber - previousSequenceNumber));
-		statusMsg.values.push_back(realTimeCapabilityKV);
+		if(previousSequenceNumber != 0)
+		{
+			diagnostic_msgs::KeyValue realTimeCapabilityKV;
+			realTimeCapabilityKV.key = "Real-time capability %";
+			realTimeCapabilityKV.value = std::to_string(info.processingTimePercentage * (float) (sequenceNumber - previousSequenceNumber));
+			statusMsg.values.push_back(realTimeCapabilityKV);
+		}
+		previousSequenceNumber = sequenceNumber;
 	}
 	catch(const tf2::ExtrapolationException& ex)
 	{

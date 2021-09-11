@@ -24,6 +24,8 @@ PM::TransformationParameters odomToMap;
 ros::Publisher mapPublisher;
 ros::Publisher odomPublisher;
 ros::Publisher diagnosticPublisher;
+ros::Publisher lastSuccessfulPointCloudPublisher;
+std::atomic_bool lastSuccessfulPointCloudPublished;
 std::unique_ptr<tf2_ros::Buffer> tfBuffer;
 std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
@@ -34,6 +36,9 @@ PM::TransformationParameters robotPoseToSet;
 PM::TransformationParameters previousRobotToMap;
 ros::Time previousTimeStamp;
 unsigned previousSequenceNumber;
+PM::DataPoints lastSuccessfulPointCloud;
+ros::Time lastSuccessfulPointCloudTimeStamp;
+std::atomic_bool mapperEnabled;
 
 void saveMap(const std::string& mapFileName)
 {
@@ -127,6 +132,8 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		norlab_icp_mapper::DiagnosticInformation info = mapper->processInput(input, sensorToMapBeforeUpdate,
 																			 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
 		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
+		lastSuccessfulPointCloud = transformation->compute(input, sensorToMapAfterUpdate);
+		lastSuccessfulPointCloudTimeStamp = timeStamp;
 
 		mapTfLock.lock();
 		odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
@@ -216,6 +223,14 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 	{
 		ROS_WARN("%s", ex.what());
 
+		if(!lastSuccessfulPointCloudPublished)
+		{
+			sensor_msgs::PointCloud2 pointCloudMsg = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(lastSuccessfulPointCloud, "map", lastSuccessfulPointCloudTimeStamp);
+			lastSuccessfulPointCloudPublisher.publish(pointCloudMsg);
+			lastSuccessfulPointCloudPublished.store(true);
+			mapperEnabled.store(false);
+		}
+
 		statusMsg.level = diagnostic_msgs::DiagnosticStatus::ERROR;
 		statusMsg.message = "ICP failed to converge: " + std::string(ex.what());
 	}
@@ -242,12 +257,18 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 
 void pointCloud2Callback(const sensor_msgs::PointCloud2& cloudMsgIn)
 {
-	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp, cloudMsgIn.header.seq);
+	if(mapperEnabled.load())
+	{
+		gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp, cloudMsgIn.header.seq);
+	}
 }
 
 void laserScanCallback(const sensor_msgs::LaserScan& scanMsgIn)
 {
-	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp, scanMsgIn.header.seq);
+	if(mapperEnabled.load())
+	{
+		gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp, scanMsgIn.header.seq);
+	}
 }
 
 bool reloadYamlConfigCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
@@ -335,6 +356,14 @@ bool disableMappingCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Resp
 	return true;
 }
 
+bool reviveMapperCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+{
+	ROS_INFO("Reviving mapper...");
+	lastSuccessfulPointCloudPublished.store(false);
+	mapperEnabled.store(true);
+	return true;
+}
+
 void mapPublisherLoop()
 {
 	ros::Rate publishRate(params->mapPublishRate);
@@ -380,6 +409,8 @@ int main(int argc, char** argv)
 	params = std::unique_ptr<NodeParameters>(new NodeParameters(pn));
 
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
+	lastSuccessfulPointCloudPublished.store(false);
+	mapperEnabled.store(true);
 
 	mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(new norlab_icp_mapper::Mapper(params->inputFiltersConfig, params->icpConfig,
 																					  params->mapPostFiltersConfig, params->mapUpdateCondition,
@@ -416,6 +447,7 @@ int main(int argc, char** argv)
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
 	diagnosticPublisher = n.advertise<diagnostic_msgs::DiagnosticArray>("icp_diagnostics", 2, true);
+	lastSuccessfulPointCloudPublisher = n.advertise<sensor_msgs::PointCloud2>("last_successful_pointcloud", 2, true);
 
 	ros::Subscriber sub;
 	if(params->is3D)
@@ -437,6 +469,7 @@ int main(int argc, char** argv)
 	ros::ServiceServer saveTrajectoryService = n.advertiseService("save_trajectory", saveTrajectoryCallback);
 	ros::ServiceServer enableMappingService = n.advertiseService("enable_mapping", enableMappingCallback);
 	ros::ServiceServer disableMappingService = n.advertiseService("disable_mapping", disableMappingCallback);
+	ros::ServiceServer reviveMapperService = n.advertiseService("revive_mapper", reviveMapperCallback);
 
 	std::thread mapPublisherThread = std::thread(mapPublisherLoop);
 	std::thread mapTfPublisherThread = std::thread(mapTfPublisherLoop);

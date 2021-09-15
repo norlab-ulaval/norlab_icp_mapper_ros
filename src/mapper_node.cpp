@@ -135,8 +135,9 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		lastSuccessfulPointCloud = transformation->compute(input, sensorToMapAfterUpdate);
 		lastSuccessfulPointCloudTimeStamp = timeStamp;
 
+		PM::TransformationParameters currentOdomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
 		mapTfLock.lock();
-		odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
+		odomToMap = currentOdomToMap;
 		mapTfLock.unlock();
 
 		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
@@ -148,7 +149,7 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		if(!previousTimeStamp.isZero())
 		{
 			Eigen::Vector3f linearDisplacement = robotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
-			float deltaTime = (float)(timeStamp - previousTimeStamp).toSec();
+			float deltaTime = (float) (timeStamp - previousTimeStamp).toSec();
 			Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
 			odomMsgOut.twist.twist.linear.x = linearVelocity(0);
 			odomMsgOut.twist.twist.linear.y = linearVelocity(1);
@@ -158,6 +159,12 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		previousRobotToMap = robotToMap;
 
 		odomPublisher.publish(odomMsgOut);
+
+		if(!params->publishTfsBetweenRegistrations)
+		{
+			geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map", params->odomFrame, timeStamp);
+			tfBroadcaster->sendTransform(currentOdomToMapTf);
+		}
 
 		idleTimeLock.lock();
 		lastTimeInputWasProcessed = std::chrono::steady_clock::now();
@@ -471,12 +478,19 @@ int main(int argc, char** argv)
 	ros::ServiceServer reviveMapperService = n.advertiseService("revive_mapper", reviveMapperCallback);
 
 	std::thread mapPublisherThread = std::thread(mapPublisherLoop);
-	std::thread mapTfPublisherThread = std::thread(mapTfPublisherLoop);
+	std::thread mapTfPublisherThread;
+	if(params->publishTfsBetweenRegistrations)
+	{
+		mapTfPublisherThread = std::thread(mapTfPublisherLoop);
+	}
 
 	ros::spin();
 
 	mapPublisherThread.join();
-	mapTfPublisherThread.join();
+	if(params->publishTfsBetweenRegistrations)
+	{
+		mapTfPublisherThread.join();
+	}
 	if(!params->isOnline)
 	{
 		mapperShutdownThread.join();

@@ -40,6 +40,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 	nodeHandle.param<bool>("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive, true);
+	nodeHandle.param<int>("consecutive_convergence_errors_before_failure", consecutiveConvergenceErrorsBeforeFailure, 5);
 }
 
 void NodeParameters::validateParameters() const

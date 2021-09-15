@@ -25,7 +25,6 @@ ros::Publisher mapPublisher;
 ros::Publisher odomPublisher;
 ros::Publisher diagnosticPublisher;
 ros::Publisher lastSuccessfulPointCloudPublisher;
-std::atomic_bool lastSuccessfulPointCloudPublished;
 std::unique_ptr<tf2_ros::Buffer> tfBuffer;
 std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
@@ -39,6 +38,7 @@ unsigned previousSequenceNumber;
 PM::DataPoints lastSuccessfulPointCloud;
 ros::Time lastSuccessfulPointCloudTimeStamp;
 std::atomic_bool mapperEnabled;
+int consecutiveConvergenceErrorCount;
 
 void saveMap(const std::string& mapFileName)
 {
@@ -204,6 +204,7 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 			statusMsg.values.push_back(realTimeCapabilityKV);
 		}
 		previousSequenceNumber = sequenceNumber;
+		consecutiveConvergenceErrorCount = 0;
 	}
 	catch(const tf2::ExtrapolationException& ex)
 	{
@@ -223,16 +224,15 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 	{
 		ROS_WARN("%s", ex.what());
 
-		if(!lastSuccessfulPointCloudPublished)
+		if(++consecutiveConvergenceErrorCount >= params->consecutiveConvergenceErrorsBeforeFailure)
 		{
 			sensor_msgs::PointCloud2 pointCloudMsg = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(lastSuccessfulPointCloud, "map", lastSuccessfulPointCloudTimeStamp);
 			lastSuccessfulPointCloudPublisher.publish(pointCloudMsg);
-			lastSuccessfulPointCloudPublished.store(true);
 			mapperEnabled.store(false);
 		}
 
 		statusMsg.level = diagnostic_msgs::DiagnosticStatus::ERROR;
-		statusMsg.message = "ICP failed to converge: " + std::string(ex.what());
+		statusMsg.message = "ICP failed to converge " + std::to_string(consecutiveConvergenceErrorCount) + " times in a row: " + std::string(ex.what());
 	}
 	catch(const std::exception& ex)
 	{
@@ -359,7 +359,6 @@ bool disableMappingCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Resp
 bool reviveMapperCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
 	ROS_INFO("Reviving mapper...");
-	lastSuccessfulPointCloudPublished.store(false);
 	mapperEnabled.store(true);
 	return true;
 }
@@ -409,8 +408,8 @@ int main(int argc, char** argv)
 	params = std::unique_ptr<NodeParameters>(new NodeParameters(pn));
 
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
-	lastSuccessfulPointCloudPublished.store(false);
 	mapperEnabled.store(true);
+	consecutiveConvergenceErrorCount = 0;
 
 	mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(new norlab_icp_mapper::Mapper(params->inputFiltersConfig, params->icpConfig,
 																					  params->mapPostFiltersConfig, params->mapUpdateCondition,

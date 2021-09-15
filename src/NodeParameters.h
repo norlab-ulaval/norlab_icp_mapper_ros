@@ -46,6 +46,7 @@ public:
 	bool computeProbDynamic;
 	bool isMapping;
 	bool saveMapCellsOnHardDrive;
+	int consecutiveConvergenceErrorsBeforeFailure;
 
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

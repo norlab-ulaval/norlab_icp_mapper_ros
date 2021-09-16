@@ -35,13 +35,13 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<float>("epsilon_d", epsilonD, 0.01);
 	nodeHandle.param<float>("alpha", alpha, 0.8);
 	nodeHandle.param<float>("beta", beta, 0.99);
+	nodeHandle.param<int>("consecutive_convergence_errors_before_failure", consecutiveConvergenceErrorsBeforeFailure, 5);
 	nodeHandle.param<bool>("is_3D", is3D, true);
 	nodeHandle.param<bool>("is_online", isOnline, true);
 	nodeHandle.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 	nodeHandle.param<bool>("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive, true);
 	nodeHandle.param<bool>("publish_tfs_between_registrations", publishTfsBetweenRegistrations, true);
-	nodeHandle.param<int>("consecutive_convergence_errors_before_failure", consecutiveConvergenceErrorsBeforeFailure, 5);
 }
 
 void NodeParameters::validateParameters() const
@@ -187,6 +187,11 @@ void NodeParameters::validateParameters() const
 	if(beta < 0 || beta > 1)
 	{
 		throw std::runtime_error("Invalid beta: " + std::to_string(beta));
+	}
+
+	if(consecutiveConvergenceErrorsBeforeFailure < 1)
+	{
+		throw std::runtime_error("Invalid consecutive number of convergence errors before failure: " + std::to_string(consecutiveConvergenceErrorsBeforeFailure));
 	}
 
 	if(!isMapping && initialMapFileName.empty())

@@ -41,13 +41,13 @@ public:
 	float epsilonD;
 	float alpha;
 	float beta;
+	int consecutiveConvergenceErrorsBeforeFailure;
 	bool is3D;
 	bool isOnline;
 	bool computeProbDynamic;
 	bool isMapping;
 	bool saveMapCellsOnHardDrive;
 	bool publishTfsBetweenRegistrations;
-	int consecutiveConvergenceErrorsBeforeFailure;
 
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

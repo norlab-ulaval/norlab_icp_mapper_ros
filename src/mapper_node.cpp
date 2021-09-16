@@ -24,7 +24,7 @@ PM::TransformationParameters odomToMap;
 ros::Publisher mapPublisher;
 ros::Publisher odomPublisher;
 ros::Publisher diagnosticPublisher;
-ros::Publisher lastSuccessfulPointCloudPublisher;
+ros::Publisher lastPointCloudBeforeFailurePublisher;
 std::unique_ptr<tf2_ros::Buffer> tfBuffer;
 std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
 std::mutex mapTfLock;
@@ -35,8 +35,8 @@ PM::TransformationParameters robotPoseToSet;
 PM::TransformationParameters previousRobotToMap;
 ros::Time previousTimeStamp;
 unsigned previousSequenceNumber;
-PM::DataPoints lastSuccessfulPointCloud;
-ros::Time lastSuccessfulPointCloudTimeStamp;
+PM::DataPoints lastPointCloudBeforeFailure;
+ros::Time lastPointCloudBeforeFailureTimeStamp;
 std::atomic_bool mapperEnabled;
 int consecutiveConvergenceErrorCount;
 
@@ -132,8 +132,8 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		norlab_icp_mapper::DiagnosticInformation info = mapper->processInput(input, sensorToMapBeforeUpdate,
 																			 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
 		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
-		lastSuccessfulPointCloud = transformation->compute(input, sensorToMapAfterUpdate);
-		lastSuccessfulPointCloudTimeStamp = timeStamp;
+		lastPointCloudBeforeFailure = transformation->compute(input, sensorToMapAfterUpdate);
+		lastPointCloudBeforeFailureTimeStamp = timeStamp;
 
 		PM::TransformationParameters currentOdomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
 		mapTfLock.lock();
@@ -233,8 +233,8 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 
 		if(++consecutiveConvergenceErrorCount >= params->consecutiveConvergenceErrorsBeforeFailure)
 		{
-			sensor_msgs::PointCloud2 pointCloudMsg = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(lastSuccessfulPointCloud, "map", lastSuccessfulPointCloudTimeStamp);
-			lastSuccessfulPointCloudPublisher.publish(pointCloudMsg);
+			sensor_msgs::PointCloud2 pointCloudMsg = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(lastPointCloudBeforeFailure, "map", lastPointCloudBeforeFailureTimeStamp);
+			lastPointCloudBeforeFailurePublisher.publish(pointCloudMsg);
 			mapperEnabled.store(false);
 		}
 
@@ -453,7 +453,7 @@ int main(int argc, char** argv)
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
 	diagnosticPublisher = n.advertise<diagnostic_msgs::DiagnosticArray>("icp_diagnostics", 2, true);
-	lastSuccessfulPointCloudPublisher = n.advertise<sensor_msgs::PointCloud2>("last_successful_pointcloud", 2, true);
+	lastPointCloudBeforeFailurePublisher = n.advertise<sensor_msgs::PointCloud2>("last_point_cloud_before_failure", 2, true);
 
 	ros::Subscriber sub;
 	if(params->is3D)

@@ -48,6 +48,7 @@ public:
 	bool isMapping;
 	bool saveMapCellsOnHardDrive;
 	bool publishTfsBetweenRegistrations;
+	bool backupLocalization;
 
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

@@ -42,6 +42,12 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 	nodeHandle.param<bool>("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive, true);
 	nodeHandle.param<bool>("publish_tfs_between_registrations", publishTfsBetweenRegistrations, true);
+	nodeHandle.param<bool>("backup_localization", backupLocalization, false);
+
+	if(backupLocalization)
+	{
+		nodeHandle.getParam("/localization_backup", initialRobotPoseString);
+	}
 }
 
 void NodeParameters::validateParameters() const

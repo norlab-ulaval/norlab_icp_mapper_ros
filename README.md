@@ -1,12 +1,12 @@
 # norlab_icp_mapper_ros
-A bridge between norlab_icp_mapper and ROS.
+A 2D/3D mapping node relying on the norlab_icp_mapper library.
 
 ## Node Parameters
 |                     Name                      |                                                 Description                                                 |                   Possible Values                   |                       Default Value                        |
 |:---------------------------------------------:|:-----------------------------------------------------------------------------------------------------------:|:---------------------------------------------------:|:----------------------------------------------------------:|
 | odom_frame                                    | Frame used for odometry.                                                                                    | Any string                                          | "odom"                                                     |
 | robot_frame                                   | Frame centered on the robot.                                                                                | Any string                                          | "base_link"                                                |
-| initial_map_file_name                         | Path of the file from which the initial map is loaded.                                                      | Any file path                                       | ""                                                         |
+| initial_map_file_name                         | Path of the file from which the initial map is loaded. Empty string when no initial map is wanted.          | Any file path                                       | ""                                                         |
 | initial_robot_pose                            | Transformation matrix in homogeneous coordinates describing the initial pose of the robot in the map frame. | Any rigid transformation matrix of dimension 3 or 4 | "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]" |
 | final_map_file_name                           | Path of the file in which the final map is saved when is_online is false.                                   | Any file path                                       | "map.vtk"                                                  |
 | final_trajectory_file_name                    | Path of the file in which the final trajectory is saved when is_online is false.                            | Any file path                                       | "trajectory.vtk"                                           |
@@ -36,6 +36,7 @@ A bridge between norlab_icp_mapper and ROS.
 | is_mapping                                    | true when map updates are wanted, false when only localization is wanted.                                   | {true, false}                                       | true                                                       |
 | save_map_cells_on_hard_drive                  | true when map cell storage on hard drive is wanted, false when map cell storage in RAM is wanted.           | {true, false}                                       | true                                                       |
 | publish_tfs_between_registrations             | true if latest computed tf publication between registrations is wanted, false otherwise.                    | {true, false}                                       | true                                                       |
+| backup_localization                           | true if localization backup on parameter server is wanted, false otherwise.                                 | {true, false}                                       | false                                                      |
 
 ## Node Topics
 |              Name               |                                    Description                                     |

@@ -16,6 +16,7 @@
 
 typedef PointMatcher<float> PM;
 
+std::unique_ptr<ros::NodeHandle> nodeHandle;
 std::unique_ptr<NodeParameters> params;
 std::shared_ptr<PM::Transformation> transformation;
 std::unique_ptr<norlab_icp_mapper::Mapper> mapper;
@@ -159,6 +160,12 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		previousRobotToMap = robotToMap;
 
 		odomPublisher.publish(odomMsgOut);
+		if(params->backupLocalization)
+		{
+			std::stringstream ss;
+			ss << robotToMap;
+			nodeHandle->setParam("/localization_backup", ss.str());
+		}
 
 		if(!params->publishTfsBetweenRegistrations)
 		{
@@ -409,7 +416,7 @@ void mapTfPublisherLoop()
 int main(int argc, char** argv)
 {
 	ros::init(argc, argv, "mapper_node");
-	ros::NodeHandle n;
+	nodeHandle = std::unique_ptr<ros::NodeHandle>(new ros::NodeHandle);
 	ros::NodeHandle pn("~");
 
 	params = std::unique_ptr<NodeParameters>(new NodeParameters(pn));
@@ -450,32 +457,32 @@ int main(int argc, char** argv)
 	tf2_ros::TransformListener tfListener(*tfBuffer);
 	tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
 
-	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
-	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
-	diagnosticPublisher = n.advertise<diagnostic_msgs::DiagnosticArray>("icp_diagnostics", 2, true);
-	lastPointCloudBeforeFailurePublisher = n.advertise<sensor_msgs::PointCloud2>("last_point_cloud_before_failure", 2, true);
+	mapPublisher = nodeHandle->advertise<sensor_msgs::PointCloud2>("map", 2, true);
+	odomPublisher = nodeHandle->advertise<nav_msgs::Odometry>("icp_odom", 50, true);
+	diagnosticPublisher = nodeHandle->advertise<diagnostic_msgs::DiagnosticArray>("icp_diagnostics", 2, true);
+	lastPointCloudBeforeFailurePublisher = nodeHandle->advertise<sensor_msgs::PointCloud2>("last_point_cloud_before_failure", 2, true);
 
 	ros::Subscriber sub;
 	if(params->is3D)
 	{
 		robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
 		odomToMap = PM::Matrix::Identity(4, 4);
-		sub = n.subscribe("points_in", messageQueueSize, pointCloud2Callback);
+		sub = nodeHandle->subscribe("points_in", messageQueueSize, pointCloud2Callback);
 	}
 	else
 	{
 		robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
 		odomToMap = PM::Matrix::Identity(3, 3);
-		sub = n.subscribe("points_in", messageQueueSize, laserScanCallback);
+		sub = nodeHandle->subscribe("points_in", messageQueueSize, laserScanCallback);
 	}
 
-	ros::ServiceServer reloadYamlConfigService = n.advertiseService("reload_yaml_config", reloadYamlConfigCallback);
-	ros::ServiceServer saveMapService = n.advertiseService("save_map", saveMapCallback);
-	ros::ServiceServer loadMapService = n.advertiseService("load_map", loadMapCallback);
-	ros::ServiceServer saveTrajectoryService = n.advertiseService("save_trajectory", saveTrajectoryCallback);
-	ros::ServiceServer enableMappingService = n.advertiseService("enable_mapping", enableMappingCallback);
-	ros::ServiceServer disableMappingService = n.advertiseService("disable_mapping", disableMappingCallback);
-	ros::ServiceServer reviveMapperService = n.advertiseService("revive_mapper", reviveMapperCallback);
+	ros::ServiceServer reloadYamlConfigService = nodeHandle->advertiseService("reload_yaml_config", reloadYamlConfigCallback);
+	ros::ServiceServer saveMapService = nodeHandle->advertiseService("save_map", saveMapCallback);
+	ros::ServiceServer loadMapService = nodeHandle->advertiseService("load_map", loadMapCallback);
+	ros::ServiceServer saveTrajectoryService = nodeHandle->advertiseService("save_trajectory", saveTrajectoryCallback);
+	ros::ServiceServer enableMappingService = nodeHandle->advertiseService("enable_mapping", enableMappingCallback);
+	ros::ServiceServer disableMappingService = nodeHandle->advertiseService("disable_mapping", disableMappingCallback);
+	ros::ServiceServer reviveMapperService = nodeHandle->advertiseService("revive_mapper", reviveMapperCallback);
 
 	std::thread mapPublisherThread = std::thread(mapPublisherLoop);
 	std::thread mapTfPublisherThread;

@@ -40,6 +40,8 @@ PM::DataPoints lastPointCloudBeforeFailure;
 ros::Time lastPointCloudBeforeFailureTimeStamp;
 std::atomic_bool mapperEnabled;
 int consecutiveConvergenceErrorCount;
+PM::DataPoints backupMap;
+std::atomic_bool backupMapReceived;
 
 void saveMap(const std::string& mapFileName)
 {
@@ -160,11 +162,11 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		previousRobotToMap = robotToMap;
 
 		odomPublisher.publish(odomMsgOut);
-		if(params->backupLocalization)
+		if(params->backupInRAM)
 		{
 			std::stringstream ss;
 			ss << robotToMap;
-			nodeHandle->setParam("/localization_backup", ss.str());
+			nodeHandle->setParam("/backup_localization", ss.str());
 		}
 
 		if(!params->publishTfsBetweenRegistrations)
@@ -283,6 +285,12 @@ void laserScanCallback(const sensor_msgs::LaserScan& scanMsgIn)
 	{
 		gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp, scanMsgIn.header.seq);
 	}
+}
+
+void backupMapCallback(const sensor_msgs::PointCloud2& msg)
+{
+	backupMap = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(msg);
+	backupMapReceived.store(true);
 }
 
 bool reloadYamlConfigCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
@@ -439,6 +447,7 @@ int main(int argc, char** argv)
 	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 	mapperEnabled.store(true);
 	consecutiveConvergenceErrorCount = 0;
+	backupMapReceived.store(false);
 
 	mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(new norlab_icp_mapper::Mapper(params->inputFiltersConfig, params->icpConfig,
 																					  params->mapPostFiltersConfig, params->mapUpdateCondition,
@@ -454,6 +463,33 @@ int main(int argc, char** argv)
 		loadMap(params->initialMapFileName);
 	}
 	setRobotPose(params->initialRobotPose);
+
+	// try to overwrite initial map and pose if backup in RAM is enabled
+	if(params->backupInRAM)
+	{
+		ros::Subscriber backupMapSubscriber = nodeHandle->subscribe("/backup_map", 1, backupMapCallback);
+		ros::Time startTime = ros::Time::now();
+		while(ros::Time::now() - startTime <= ros::Duration(5) && !backupMapReceived.load())
+		{
+			ros::spinOnce();
+		}
+		if(backupMapReceived.load())
+		{
+			ROS_INFO("Loading backup map from RAM...");
+			int euclideanDim = params->is3D ? 3 : 2;
+			if(backupMap.getEuclideanDim() != euclideanDim)
+			{
+				throw std::runtime_error("Invalid map dimension");
+			}
+			mapper->setMap(backupMap);
+		}
+
+		std::string backupLocalization;
+		if(nodeHandle->getParam("/backup_localization", backupLocalization))
+		{
+			setRobotPose(NodeParameters::parseRobotPose(backupLocalization, params->is3D));
+		}
+	}
 
 	std::thread mapperShutdownThread;
 	int messageQueueSize;
@@ -477,18 +513,18 @@ int main(int argc, char** argv)
 	diagnosticPublisher = nodeHandle->advertise<diagnostic_msgs::DiagnosticArray>("icp_diagnostics", 2, true);
 	lastPointCloudBeforeFailurePublisher = nodeHandle->advertise<sensor_msgs::PointCloud2>("last_point_cloud_before_failure", 2, true);
 
-	ros::Subscriber sub;
+	ros::Subscriber pointCloudSubscriber;
 	if(params->is3D)
 	{
 		robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
 		odomToMap = PM::Matrix::Identity(4, 4);
-		sub = nodeHandle->subscribe("points_in", messageQueueSize, pointCloud2Callback);
+		pointCloudSubscriber = nodeHandle->subscribe("points_in", messageQueueSize, pointCloud2Callback);
 	}
 	else
 	{
 		robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
 		odomToMap = PM::Matrix::Identity(3, 3);
-		sub = nodeHandle->subscribe("points_in", messageQueueSize, laserScanCallback);
+		pointCloudSubscriber = nodeHandle->subscribe("points_in", messageQueueSize, laserScanCallback);
 	}
 
 	ros::ServiceServer reloadYamlConfigService = nodeHandle->advertiseService("reload_yaml_config", reloadYamlConfigCallback);

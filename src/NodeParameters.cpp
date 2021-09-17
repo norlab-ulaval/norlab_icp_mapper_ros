@@ -42,12 +42,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 	nodeHandle.param<bool>("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive, true);
 	nodeHandle.param<bool>("publish_tfs_between_registrations", publishTfsBetweenRegistrations, true);
-	nodeHandle.param<bool>("backup_localization", backupLocalization, false);
-
-	if(backupLocalization)
-	{
-		nodeHandle.getParam("/localization_backup", initialRobotPoseString);
-	}
+	nodeHandle.param<bool>("backup_in_ram", backupInRAM, false);
 }
 
 void NodeParameters::validateParameters() const
@@ -208,21 +203,21 @@ void NodeParameters::validateParameters() const
 
 void NodeParameters::parseComplexParameters()
 {
-	parseInitialRobotPose();
+	initialRobotPose = parseRobotPose(initialRobotPoseString, is3D);
 }
 
-void NodeParameters::parseInitialRobotPose()
+NodeParameters::PM::TransformationParameters NodeParameters::parseRobotPose(std::string robotPoseString, const bool& is3D)
 {
 	int homogeneousDim = is3D ? 4 : 3;
-	initialRobotPose = PM::TransformationParameters::Identity(homogeneousDim, homogeneousDim);
+	PM::TransformationParameters robotPose = PM::TransformationParameters::Identity(homogeneousDim, homogeneousDim);
 
-	initialRobotPoseString.erase(std::remove(initialRobotPoseString.begin(), initialRobotPoseString.end(), '['), initialRobotPoseString.end());
-	initialRobotPoseString.erase(std::remove(initialRobotPoseString.begin(), initialRobotPoseString.end(), ']'), initialRobotPoseString.end());
-	std::replace(initialRobotPoseString.begin(), initialRobotPoseString.end(), ',', ' ');
-	std::replace(initialRobotPoseString.begin(), initialRobotPoseString.end(), ';', ' ');
+	robotPoseString.erase(std::remove(robotPoseString.begin(), robotPoseString.end(), '['), robotPoseString.end());
+	robotPoseString.erase(std::remove(robotPoseString.begin(), robotPoseString.end(), ']'), robotPoseString.end());
+	std::replace(robotPoseString.begin(), robotPoseString.end(), ',', ' ');
+	std::replace(robotPoseString.begin(), robotPoseString.end(), ';', ' ');
 
 	float poseMatrix[homogeneousDim * homogeneousDim];
-	std::stringstream poseStringStream(initialRobotPoseString);
+	std::stringstream poseStringStream(robotPoseString);
 	for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
 	{
 		if(!(poseStringStream >> poseMatrix[i]))
@@ -239,6 +234,8 @@ void NodeParameters::parseInitialRobotPose()
 
 	for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
 	{
-		initialRobotPose(i / homogeneousDim, i % homogeneousDim) = poseMatrix[i];
+		robotPose(i / homogeneousDim, i % homogeneousDim) = poseMatrix[i];
 	}
+
+	return robotPose;
 }

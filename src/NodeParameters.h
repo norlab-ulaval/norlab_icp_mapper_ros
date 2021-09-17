@@ -12,9 +12,10 @@ private:
 	void retrieveParameters(const ros::NodeHandle& nodeHandle);
 	void validateParameters() const;
 	void parseComplexParameters();
-	void parseInitialRobotPose();
 
 public:
+	static PM::TransformationParameters parseRobotPose(std::string robotPoseString, const bool& is3D);
+
 	std::string odomFrame;
 	std::string robotFrame;
 	std::string initialMapFileName;
@@ -48,7 +49,7 @@ public:
 	bool isMapping;
 	bool saveMapCellsOnHardDrive;
 	bool publishTfsBetweenRegistrations;
-	bool backupLocalization;
+	bool backupInRAM;
 
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

@@ -36,16 +36,17 @@ A 2D/3D mapping node relying on the norlab_icp_mapper library.
 | is_mapping                                    | true when map updates are wanted, false when only localization is wanted.                                   | {true, false}                                       | true                                                       |
 | save_map_cells_on_hard_drive                  | true when map cell storage on hard drive is wanted, false when map cell storage in RAM is wanted.           | {true, false}                                       | true                                                       |
 | publish_tfs_between_registrations             | true if latest computed tf publication between registrations is wanted, false otherwise.                    | {true, false}                                       | true                                                       |
-| backup_localization                           | true if localization backup on parameter server is wanted, false otherwise.                                 | {true, false}                                       | false                                                      |
+| backup_in_ram                                 | true if localization and mapping backup in RAM is wanted, false otherwise.                                  | {true, false}                                       | false                                                      |
 
 ## Node Topics
-|              Name               |                                    Description                                     |
-|:-------------------------------:|:----------------------------------------------------------------------------------:|
-| points_in                       | Topic from which the input points are retrieved.                                   |
-| map                             | Topic in which the map is published.                                               |
-| icp_odom                        | Topic in which the corrected odometry is published.                                |
-| icp_diagnostics                 | Topic in which various diagnostic messages are published.                          |
-| last_point_cloud_before_failure | Topic in which the last registered point cloud is published when the mapper fails. |
+|              Name               |                                      Description                                       |
+|:-------------------------------:|:--------------------------------------------------------------------------------------:|
+| points_in                       | Topic from which the input points are retrieved.                                       |
+| map                             | Topic in which the map is published.                                                   |
+| icp_odom                        | Topic in which the corrected odometry is published.                                    |
+| icp_diagnostics                 | Topic in which various diagnostic messages are published.                              |
+| last_point_cloud_before_failure | Topic in which the last registered point cloud is published when the mapper fails.     |
+| backup_map                      | Topic from which the backup map is fetched at startup if backup_in_ram is set to true. |
 
 ## Node Services
 |         Name         |                      Description                       |     Parameter Names     |                                                                  Parameter Description                                                                  |

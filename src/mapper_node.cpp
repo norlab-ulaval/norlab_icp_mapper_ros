@@ -370,6 +370,13 @@ bool disableMappingCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Resp
 	return true;
 }
 
+bool clearMapCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+{
+	ROS_INFO("Clearing map...");
+	mapper->clearMap();
+	return true;
+}
+
 bool reviveMapperCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
 	ROS_INFO("Reviving mapper...");
@@ -490,6 +497,7 @@ int main(int argc, char** argv)
 	ros::ServiceServer saveTrajectoryService = nodeHandle->advertiseService("save_trajectory", saveTrajectoryCallback);
 	ros::ServiceServer enableMappingService = nodeHandle->advertiseService("enable_mapping", enableMappingCallback);
 	ros::ServiceServer disableMappingService = nodeHandle->advertiseService("disable_mapping", disableMappingCallback);
+	ros::ServiceServer clearMapService = nodeHandle->advertiseService("clear_map", clearMapCallback);
 	ros::ServiceServer reviveMapperService = nodeHandle->advertiseService("revive_mapper", reviveMapperCallback);
 	ros::ServiceServer reviveAndClearMapService = nodeHandle->advertiseService("revive_and_clear_map", reviveAndClearMapCallback);
 

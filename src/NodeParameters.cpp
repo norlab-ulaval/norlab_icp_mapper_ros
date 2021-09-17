@@ -203,21 +203,21 @@ void NodeParameters::validateParameters() const
 
 void NodeParameters::parseComplexParameters()
 {
-	initialRobotPose = parseRobotPose(initialRobotPoseString, is3D);
+	initialRobotPose = parseTransformationParameters(initialRobotPoseString, is3D);
 }
 
-NodeParameters::PM::TransformationParameters NodeParameters::parseRobotPose(std::string robotPoseString, const bool& is3D)
+NodeParameters::PM::TransformationParameters NodeParameters::parseTransformationParameters(std::string transformationString, const bool& is3D)
 {
 	int homogeneousDim = is3D ? 4 : 3;
 	PM::TransformationParameters robotPose = PM::TransformationParameters::Identity(homogeneousDim, homogeneousDim);
 
-	robotPoseString.erase(std::remove(robotPoseString.begin(), robotPoseString.end(), '['), robotPoseString.end());
-	robotPoseString.erase(std::remove(robotPoseString.begin(), robotPoseString.end(), ']'), robotPoseString.end());
-	std::replace(robotPoseString.begin(), robotPoseString.end(), ',', ' ');
-	std::replace(robotPoseString.begin(), robotPoseString.end(), ';', ' ');
+	transformationString.erase(std::remove(transformationString.begin(), transformationString.end(), '['), transformationString.end());
+	transformationString.erase(std::remove(transformationString.begin(), transformationString.end(), ']'), transformationString.end());
+	std::replace(transformationString.begin(), transformationString.end(), ',', ' ');
+	std::replace(transformationString.begin(), transformationString.end(), ';', ' ');
 
 	float poseMatrix[homogeneousDim * homogeneousDim];
-	std::stringstream poseStringStream(robotPoseString);
+	std::stringstream poseStringStream(transformationString);
 	for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
 	{
 		if(!(poseStringStream >> poseMatrix[i]))

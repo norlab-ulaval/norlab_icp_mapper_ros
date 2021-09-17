@@ -138,9 +138,8 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		lastPointCloudBeforeFailure = transformation->compute(input, sensorToMapAfterUpdate);
 		lastPointCloudBeforeFailureTimeStamp = timeStamp;
 
-		PM::TransformationParameters currentOdomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
 		mapTfLock.lock();
-		odomToMap = currentOdomToMap;
+		odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
 		mapTfLock.unlock();
 
 		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
@@ -165,14 +164,14 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		if(params->backupInRAM)
 		{
 			std::stringstream ss;
-			ss << robotToMap;
+			ss << odomToMap;
 			nodeHandle->setParam("/backup_localization", ss.str());
 		}
 
 		if(!params->publishTfsBetweenRegistrations)
 		{
-			geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map", params->odomFrame, timeStamp);
-			tfBroadcaster->sendTransform(currentOdomToMapTf);
+			geometry_msgs::TransformStamped odomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(odomToMap, "map", params->odomFrame, timeStamp);
+			tfBroadcaster->sendTransform(odomToMapTf);
 		}
 
 		idleTimeLock.lock();
@@ -449,6 +448,15 @@ int main(int argc, char** argv)
 	consecutiveConvergenceErrorCount = 0;
 	backupMapReceived.store(false);
 
+	if(params->is3D)
+	{
+		odomToMap = PM::Matrix::Identity(4, 4);
+	}
+	else
+	{
+		odomToMap = PM::Matrix::Identity(3, 3);
+	}
+
 	mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(new norlab_icp_mapper::Mapper(params->inputFiltersConfig, params->icpConfig,
 																					  params->mapPostFiltersConfig, params->mapUpdateCondition,
 																					  params->mapUpdateOverlap, params->mapUpdateDelay,
@@ -487,7 +495,9 @@ int main(int argc, char** argv)
 		std::string backupLocalization;
 		if(nodeHandle->getParam("/backup_localization", backupLocalization))
 		{
-			setRobotPose(NodeParameters::parseRobotPose(backupLocalization, params->is3D));
+			ROS_INFO("Loading backup localization from RAM...");
+			odomToMap = NodeParameters::parseTransformationParameters(backupLocalization, params->is3D);
+			hasToSetRobotPose = false;
 		}
 	}
 
@@ -517,13 +527,11 @@ int main(int argc, char** argv)
 	if(params->is3D)
 	{
 		robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
-		odomToMap = PM::Matrix::Identity(4, 4);
 		pointCloudSubscriber = nodeHandle->subscribe("points_in", messageQueueSize, pointCloud2Callback);
 	}
 	else
 	{
 		robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
-		odomToMap = PM::Matrix::Identity(3, 3);
 		pointCloudSubscriber = nodeHandle->subscribe("points_in", messageQueueSize, laserScanCallback);
 	}
 

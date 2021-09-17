@@ -14,7 +14,7 @@ private:
 	void parseComplexParameters();
 
 public:
-	static PM::TransformationParameters parseRobotPose(std::string robotPoseString, const bool& is3D);
+	static PM::TransformationParameters parseTransformationParameters(std::string transformationString, const bool& is3D);
 
 	std::string odomFrame;
 	std::string robotFrame;

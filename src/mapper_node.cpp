@@ -377,6 +377,14 @@ bool reviveMapperCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Respon
 	return true;
 }
 
+bool reviveAndClearMapCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+{
+	ROS_INFO("Reviving and clearing map...");
+	mapper->clearMap();
+	mapperEnabled.store(true);
+	return true;
+}
+
 void mapPublisherLoop()
 {
 	ros::Rate publishRate(params->mapPublishRate);
@@ -483,6 +491,7 @@ int main(int argc, char** argv)
 	ros::ServiceServer enableMappingService = nodeHandle->advertiseService("enable_mapping", enableMappingCallback);
 	ros::ServiceServer disableMappingService = nodeHandle->advertiseService("disable_mapping", disableMappingCallback);
 	ros::ServiceServer reviveMapperService = nodeHandle->advertiseService("revive_mapper", reviveMapperCallback);
+	ros::ServiceServer reviveAndClearMapService = nodeHandle->advertiseService("revive_and_clear_map", reviveAndClearMapCallback);
 
 	std::thread mapPublisherThread = std::thread(mapPublisherLoop);
 	std::thread mapTfPublisherThread;

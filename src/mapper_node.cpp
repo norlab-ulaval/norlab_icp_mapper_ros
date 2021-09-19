@@ -472,6 +472,20 @@ int main(int argc, char** argv)
 	}
 	setRobotPose(params->initialRobotPose);
 
+	int messageQueueSize;
+	if(params->isOnline)
+	{
+		tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer);
+		messageQueueSize = 1;
+	}
+	else
+	{
+		tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(ros::Duration(ros::DURATION_MAX)));
+		messageQueueSize = 0;
+	}
+	tf2_ros::TransformListener tfListener(*tfBuffer);
+	tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
+
 	// try to overwrite initial map and pose if backup in RAM is enabled
 	if(params->backupInRAM)
 	{
@@ -502,21 +516,11 @@ int main(int argc, char** argv)
 	}
 
 	std::thread mapperShutdownThread;
-	int messageQueueSize;
-	if(params->isOnline)
-	{
-		tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer);
-		messageQueueSize = 1;
-	}
-	else
+	if(!params->isOnline)
 	{
 		mapperShutdownThread = std::thread(mapperShutdownLoop);
-		tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(ros::Duration(ros::DURATION_MAX)));
-		messageQueueSize = 0;
-	}
 
-	tf2_ros::TransformListener tfListener(*tfBuffer);
-	tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
+	}
 
 	mapPublisher = nodeHandle->advertise<sensor_msgs::PointCloud2>("map", 2, true);
 	odomPublisher = nodeHandle->advertise<nav_msgs::Odometry>("icp_odom", 50, true);

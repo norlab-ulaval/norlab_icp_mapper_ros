@@ -23,6 +23,7 @@ std::unique_ptr<norlab_icp_mapper::Mapper> mapper;
 std::unique_ptr<Trajectory> robotTrajectory;
 PM::TransformationParameters odomToMap;
 ros::Publisher mapPublisher;
+ros::Publisher registeredPointCloudPublisher;
 ros::Publisher odomPublisher;
 ros::Publisher diagnosticPublisher;
 ros::Publisher lastPointCloudBeforeFailurePublisher;
@@ -135,7 +136,10 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		norlab_icp_mapper::DiagnosticInformation info = mapper->processInput(input, sensorToMapBeforeUpdate,
 																			 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
 		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
-		lastPointCloudBeforeFailure = transformation->compute(input, sensorToMapAfterUpdate);
+		PM::DataPoints registeredPointCloud = transformation->compute(input, sensorToMapAfterUpdate);
+		registeredPointCloudPublisher.publish(PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(registeredPointCloud, "map", timeStamp));
+
+		lastPointCloudBeforeFailure = registeredPointCloud;
 		lastPointCloudBeforeFailureTimeStamp = timeStamp;
 
 		mapTfLock.lock();
@@ -523,6 +527,7 @@ int main(int argc, char** argv)
 	}
 
 	mapPublisher = nodeHandle->advertise<sensor_msgs::PointCloud2>("map", 2, true);
+	registeredPointCloudPublisher = nodeHandle->advertise<sensor_msgs::PointCloud2>("registered_point_cloud", 2, true);
 	odomPublisher = nodeHandle->advertise<nav_msgs::Odometry>("icp_odom", 50, true);
 	diagnosticPublisher = nodeHandle->advertise<diagnostic_msgs::DiagnosticArray>("icp_diagnostics", 2, true);
 	lastPointCloudBeforeFailurePublisher = nodeHandle->advertise<sensor_msgs::PointCloud2>("last_point_cloud_before_failure", 2, true);

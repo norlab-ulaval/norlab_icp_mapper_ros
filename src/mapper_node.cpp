@@ -106,8 +106,25 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 			sensorToMapBeforeUpdate = robotPoseToSet * sensorToRobot;
 			hasToSetRobotPose = false;
 		}
-
-		mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+		try
+		{
+			mapper->processInput(input, sensorToMapBeforeUpdate,
+								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+		}
+		catch (const PM::ConvergenceError& e)
+		{
+			ROS_ERROR_STREAM("Unable to process input: " << e.what());
+			try
+			{
+				saveTrajectory("convergence_error_traj.vtk");
+				saveMap("convergence_error_map.vtk");
+			}
+			catch(const std::runtime_error& e)
+			{
+				ROS_ERROR_STREAM("Unable to save: " << e.what());
+			}
+			throw;
+		}
 		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
 
 		mapTfLock.lock();

@@ -32,6 +32,14 @@ PM::TransformationParameters robotPoseToSet;
 PM::TransformationParameters previousRobotToMap;
 ros::Time previousTimeStamp;
 
+std::string appendToFilePath(const std::string& filePath, const std::string& appendix)
+{
+	std::string::size_type const ext_pos(filePath.find_last_of('.'));
+	std::string map_path_without_extension = filePath.substr(0, ext_pos);
+
+	return map_path_without_extension.append(appendix);
+}
+
 void saveMap(const std::string& mapFileName)
 {
 	ROS_INFO("Saving map to %s", mapFileName.c_str());
@@ -116,8 +124,8 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 			ROS_ERROR_STREAM("Unable to process input: " << e.what());
 			try
 			{
-				saveTrajectory("convergence_error_traj.vtk");
-				saveMap("convergence_error_map.vtk");
+				saveTrajectory(appendToFilePath(params->finalMapFileName, "_convergence_error.vtk"));
+				saveMap(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error.vtk"));
 			}
 			catch(const std::runtime_error& e)
 			{

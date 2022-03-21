@@ -124,8 +124,8 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 			ROS_ERROR_STREAM("Unable to process input: " << e.what());
 			try
 			{
-				saveTrajectory(appendToFilePath(params->finalMapFileName, "_convergence_error.vtk"));
-				saveMap(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error.vtk"));
+				saveTrajectory(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error.vtk"));
+				saveMap(appendToFilePath(params->finalMapFileName, "_convergence_error.vtk"));
 			}
 			catch(const std::runtime_error& e)
 			{

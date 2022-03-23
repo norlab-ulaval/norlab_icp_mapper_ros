@@ -32,6 +32,15 @@ PM::TransformationParameters robotPoseToSet;
 PM::TransformationParameters previousRobotToMap;
 ros::Time previousTimeStamp;
 
+std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
+{
+	std::string::size_type const extensionPosition(filePath.find_last_of('.'));
+	std::string mapPathWithoutExtension = filePath.substr(0, extensionPosition);
+	std::string extension = filePath.substr(extensionPosition, filePath.length()-1);
+
+	return mapPathWithoutExtension + suffix + extension;
+}
+
 void saveMap(const std::string& mapFileName)
 {
 	ROS_INFO("Saving map to %s", mapFileName.c_str());
@@ -106,8 +115,25 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 			sensorToMapBeforeUpdate = robotPoseToSet * sensorToRobot;
 			hasToSetRobotPose = false;
 		}
-
-		mapper->processInput(input, sensorToMapBeforeUpdate, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+		try
+		{
+			mapper->processInput(input, sensorToMapBeforeUpdate,
+								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
+		}
+		catch (const PM::ConvergenceError& convergenceError)
+		{
+			ROS_ERROR_STREAM("Unable to process input: " << convergenceError.what());
+			try
+			{
+				saveTrajectory(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error"));
+				saveMap(appendToFilePath(params->finalMapFileName, "_convergence_error"));
+			}
+			catch(const std::runtime_error& runtimeError)
+			{
+				ROS_ERROR_STREAM("Unable to save: " << runtimeError.what());
+			}
+			throw;
+		}
 		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
 
 		PM::TransformationParameters currentOdomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());

@@ -13,7 +13,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<std::string>("odom_frame", odomFrame, "odom");
 	nodeHandle.param<std::string>("robot_frame", robotFrame, "base_link");
 	nodeHandle.param<std::string>("initial_map_file_name", initialMapFileName, "");
-	nodeHandle.param<std::string>("initial_robot_pose", initialRobotPoseString, "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]");
+	nodeHandle.param<std::string>("initial_robot_pose", initialRobotPoseString, "");
 	nodeHandle.param<std::string>("final_map_file_name", finalMapFileName, "map.vtk");
 	nodeHandle.param<std::string>("final_trajectory_file_name", finalTrajectoryFileName, "trajectory.vtk");
 	nodeHandle.param<std::string>("icp_config", icpConfig, "");
@@ -200,32 +200,35 @@ void NodeParameters::parseComplexParameters()
 
 void NodeParameters::parseInitialRobotPose()
 {
-	int homogeneousDim = is3D ? 4 : 3;
-	initialRobotPose = PM::TransformationParameters::Identity(homogeneousDim, homogeneousDim);
-
-	initialRobotPoseString.erase(std::remove(initialRobotPoseString.begin(), initialRobotPoseString.end(), '['), initialRobotPoseString.end());
-	initialRobotPoseString.erase(std::remove(initialRobotPoseString.begin(), initialRobotPoseString.end(), ']'), initialRobotPoseString.end());
-	std::replace(initialRobotPoseString.begin(), initialRobotPoseString.end(), ',', ' ');
-	std::replace(initialRobotPoseString.begin(), initialRobotPoseString.end(), ';', ' ');
-
-	float poseMatrix[homogeneousDim * homogeneousDim];
-	std::stringstream poseStringStream(initialRobotPoseString);
-	for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
+	if(!initialRobotPoseString.empty())
 	{
-		if(!(poseStringStream >> poseMatrix[i]))
+		int homogeneousDim = is3D ? 4 : 3;
+		initialRobotPose = PM::TransformationParameters::Identity(homogeneousDim, homogeneousDim);
+
+		initialRobotPoseString.erase(std::remove(initialRobotPoseString.begin(), initialRobotPoseString.end(), '['), initialRobotPoseString.end());
+		initialRobotPoseString.erase(std::remove(initialRobotPoseString.begin(), initialRobotPoseString.end(), ']'), initialRobotPoseString.end());
+		std::replace(initialRobotPoseString.begin(), initialRobotPoseString.end(), ',', ' ');
+		std::replace(initialRobotPoseString.begin(), initialRobotPoseString.end(), ';', ' ');
+
+		float poseMatrix[homogeneousDim * homogeneousDim];
+		std::stringstream poseStringStream(initialRobotPoseString);
+		for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
 		{
-			throw std::runtime_error("An error occurred while trying to parse the initial robot pose.");
+			if(!(poseStringStream >> poseMatrix[i]))
+			{
+				throw std::runtime_error("An error occurred while trying to parse the initial robot pose.");
+			}
 		}
-	}
 
-	float extraOutput = 0;
-	if((poseStringStream >> extraOutput))
-	{
-		throw std::runtime_error("Invalid initial robot pose dimension.");
-	}
+		float extraOutput = 0;
+		if((poseStringStream >> extraOutput))
+		{
+			throw std::runtime_error("Invalid initial robot pose dimension.");
+		}
 
-	for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
-	{
-		initialRobotPose(i / homogeneousDim, i % homogeneousDim) = poseMatrix[i];
+		for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
+		{
+			initialRobotPose(i / homogeneousDim, i % homogeneousDim) = poseMatrix[i];
+		}
 	}
 }

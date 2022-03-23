@@ -34,7 +34,8 @@ A bridge between norlab_icp_mapper and ROS.
 | compute_prob_dynamic         |                true when computation of probability of points being dynamic is wanted, false otherwise.                | {true, false}                    | false                                                      |
 | is_mapping                   |                       true when map updates are wanted, false when only localization is wanted.                        | {true, false}                    | true                                                       |
 | save_map_cells_on_hard_drive |           true when map cell storage on hard drive is wanted, false when map cell storage in RAM is wanted.            | {true, false}                    | true                                                       |
-| publish_tfs_between_registrations | When false, the map tf is published only after registration. Otherwise with map_tf_publish_rate. | {true, false}                    | true                                                       |
+| publish_tfs_between_registrations | When false, the map tf is published only after registration. Otherwise with map_tf_publish_rate.                  | {true, false}                    | true                                                       |
+
 
 ## Node Topics
 |    Name   |                     Description                     |

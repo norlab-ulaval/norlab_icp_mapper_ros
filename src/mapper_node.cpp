@@ -305,7 +305,10 @@ int main(int argc, char** argv)
 	{
 		loadMap(params->initialMapFileName);
 	}
-	setRobotPose(params->initialRobotPose);
+	if(!params->initialRobotPoseString.empty())
+	{
+		setRobotPose(params->initialRobotPose);
+	}
 
 	std::thread mapperShutdownThread;
 	int messageQueueSize;

@@ -34,10 +34,11 @@ ros::Time previousTimeStamp;
 
 std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
 {
-	std::string::size_type const ext_pos(filePath.find_last_of('.'));
-	std::string map_path_without_extension = filePath.substr(0, ext_pos);
+	std::string::size_type const extensionPosition(filePath.find_last_of('.'));
+	std::string mapPathWithoutExtension = filePath.substr(0, extensionPosition);
+	std::string extension = filePath.substr(extensionPosition, filePath.length()-1);
 
-	return map_path_without_extension.append(suffix);
+	return mapPathWithoutExtension + suffix + extension;
 }
 
 void saveMap(const std::string& mapFileName)
@@ -119,17 +120,17 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 			mapper->processInput(input, sensorToMapBeforeUpdate,
 								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
 		}
-		catch (const PM::ConvergenceError& e)
+		catch (const PM::ConvergenceError& convergenceError)
 		{
-			ROS_ERROR_STREAM("Unable to process input: " << e.what());
+			ROS_ERROR_STREAM("Unable to process input: " << convergenceError.what());
 			try
 			{
-				saveTrajectory(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error.vtk"));
-				saveMap(appendToFilePath(params->finalMapFileName, "_convergence_error.vtk"));
+				saveTrajectory(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error"));
+				saveMap(appendToFilePath(params->finalMapFileName, "_convergence_error"));
 			}
-			catch(const std::runtime_error& e)
+			catch(const std::runtime_error& runtimeError)
 			{
-				ROS_ERROR_STREAM("Unable to save: " << e.what());
+				ROS_ERROR_STREAM("Unable to save: " << runtimeError.what());
 			}
 			throw;
 		}

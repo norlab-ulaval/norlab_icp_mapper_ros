@@ -40,6 +40,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 	nodeHandle.param<bool>("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive, true);
+	nodeHandle.param<bool>("publish_tfs_between_registrations", publishTfsBetweenRegistrations, true);
 }
 
 void NodeParameters::validateParameters() const
@@ -126,11 +127,13 @@ void NodeParameters::validateParameters() const
 		throw std::runtime_error("Invalid map publish rate: " + std::to_string(mapPublishRate));
 	}
 
-	if(mapTfPublishRate <= 0)
+	if(publishTfsBetweenRegistrations)
 	{
-		throw std::runtime_error("Invalid map tf publish rate: " + std::to_string(mapTfPublishRate));
+		if (mapTfPublishRate <= 0)
+		{
+			throw std::runtime_error("Invalid map tf publish rate: " + std::to_string(mapTfPublishRate));
+		}
 	}
-
 	if(!isOnline)
 	{
 		if(maxIdleTime < 0)

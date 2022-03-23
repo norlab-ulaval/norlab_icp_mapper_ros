@@ -46,6 +46,7 @@ public:
 	bool computeProbDynamic;
 	bool isMapping;
 	bool saveMapCellsOnHardDrive;
+	bool publishTfsBetweenRegistrations;
 
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

@@ -64,6 +64,7 @@ public:
 	float uncertaintyThreshold;
 	float uncertaintyQuantile;
 	float binaryUncertaintyThreshold;
-	
+	float scaleFactor;
+
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

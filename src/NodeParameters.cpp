@@ -57,6 +57,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<float>("uncertainty_threshold", uncertaintyThreshold, 1000.0);
 	nodeHandle.param<float>("uncertainty_quantile", uncertaintyQuantile, 1.0);
 	nodeHandle.param<float>("binary_uncertainty_threshold", binaryUncertaintyThreshold, 0.03);
+	nodeHandle.param<float>("scale_factor", scaleFactor, 1);
 }
 
 void NodeParameters::validateParameters()

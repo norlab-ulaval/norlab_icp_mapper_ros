@@ -54,7 +54,8 @@ public:
 	bool recordInertia;
 	bool perpendicularResidual;
 	bool pointToPlaneResidual;
-	bool useSkewWeights;
+	bool useCRVModel;
+	bool useICRAModel;
 	bool afterDeskewing;
 	bool softUncertaintyThreshold;
 	bool isMapping;

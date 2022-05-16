@@ -517,7 +517,7 @@ int main(int argc, char** argv)
 										  params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
 										  params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
 										  params->useCRVModel, params->useICRAModel, params->isMapping, params->skewModel, params->cornerPointUncertainty, params->uncertaintyThreshold,
-										  params->uncertaintyQuantile, params->softUncertaintyThreshold, params->binaryUncertaintyThreshold, params->afterDeskewing, params->scaleFactor));
+										  params->uncertaintyQuantile, params->softUncertaintyThreshold, params->binaryUncertaintyThreshold, params->afterDeskewing, params->scaleFactor, params->angularSpeedNoiseStd));
 	
 	loadInitialMap();
 	

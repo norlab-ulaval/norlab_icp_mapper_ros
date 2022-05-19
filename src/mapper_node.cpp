@@ -14,6 +14,7 @@
 #include "Trajectory.h"
 #include <imu_odom/Inertia.h>
 #include <set>
+#include <visualization_msgs/MarkerArray.h>
 
 std::unique_ptr<NodeParameters> params;
 std::shared_ptr<PM::Transformation> transformation;
@@ -38,6 +39,8 @@ ros::Publisher residualPublisher;
 std::mutex inertiaMeasurementsMutex;
 std::list<imu_odom::Inertia> inertiaMeasurements;
 PM::ICP icp;
+ros::Publisher markerPublisher;
+size_t lastMarkersSize;
 
 int nbRegistrations = 0;
 PM::TransformationParameters firstIcpOdom;
@@ -397,8 +400,74 @@ void mapPublisherLoop()
 		{
 			sensor_msgs::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<T>(newMap, "map", ros::Time::now());
 			mapPublisher.publish(mapMsgOut);
+
+			if(newMap.descriptorExists("covXScale") && newMap.descriptorExists("covYScale") && newMap.descriptorExists("covZScale")
+			&& newMap.descriptorExists("covX") && newMap.descriptorExists("covY") && newMap.descriptorExists("covZ"))
+			{
+				const auto& covX = newMap.getDescriptorViewByName("covX");
+				const auto& covY = newMap.getDescriptorViewByName("covY");
+				const auto& covZ = newMap.getDescriptorViewByName("covZ");
+				const auto& covXScale = newMap.getDescriptorViewByName("covXScale").unaryExpr([](float element)
+																							  { return element < 1e-6 ? 1e-6 : element; });
+				const auto& covYScale = newMap.getDescriptorViewByName("covYScale").unaryExpr([](float element)
+																							  { return element < 1e-6 ? 1e-6 : element; });
+				const auto& covZScale = newMap.getDescriptorViewByName("covZScale").unaryExpr([](float element)
+																							  { return element < 1e-6 ? 1e-6 : element; });
+
+				visualization_msgs::MarkerArray markerArray;
+				for(int i = 0; i < newMap.getNbPoints(); ++i)
+				{
+					Eigen::Matrix3f R = Eigen::Matrix3f::Zero();
+					R.col(0) = covX.col(i);
+					R.col(1) = covY.col(i);
+					R.col(2) = covZ.col(i);
+
+					if(R.determinant() < 0)
+					{
+						R.col(0) *= -1;
+					}
+
+					Eigen::Quaternionf q(R);
+					q.normalize();
+
+					visualization_msgs::Marker marker;
+					marker.header.frame_id = "map";
+					marker.header.stamp = ros::Time::now();
+					marker.id = i;
+					marker.type = visualization_msgs::Marker::SPHERE;
+					marker.action = visualization_msgs::Marker::ADD;
+					marker.pose.position.x = newMap.features(0, i);
+					marker.pose.position.y = newMap.features(1, i);
+					marker.pose.position.z = newMap.features(2, i);
+					marker.pose.orientation.x = q.x();
+					marker.pose.orientation.y = q.y();
+					marker.pose.orientation.z = q.z();
+					marker.pose.orientation.w = q.w();
+					marker.scale.x = 2 * 2 * covXScale(0, i); // 2 sigmas
+					marker.scale.y = 2 * 2 * covYScale(0, i);
+					marker.scale.z = 2 * 2 * covZScale(0, i);
+					marker.color.r = 1.0f;
+					marker.color.g = 1.0f;
+					marker.color.b = 1.0f;
+					marker.color.a = 0.5f;
+
+					markerArray.markers.emplace_back(marker);
+				}
+
+				size_t currentMarkersSize = markerArray.markers.size();
+				for (size_t i = currentMarkersSize; i < lastMarkersSize; ++i)
+				{
+					visualization_msgs::Marker marker;
+					marker.header.frame_id = "map";
+					marker.id = i;
+					marker.action = visualization_msgs::Marker::DELETE;
+					markerArray.markers.emplace_back(marker);
+				}
+				lastMarkersSize = currentMarkersSize;
+
+				markerPublisher.publish(markerArray);
+			}
 		}
-		
 		publishRate.sleep();
 	}
 }
@@ -455,7 +524,9 @@ int main(int argc, char** argv)
 	std::ifstream ifs(params->icpConfig.c_str());
 	icp.loadFromYaml(ifs);
 	ifs.close();
-	
+
+	lastMarkersSize = 0;
+
 	if(params->computeResidual)
 	{
 		meanResidualFile.open(params->meanResidualFileName);
@@ -506,6 +577,7 @@ int main(int argc, char** argv)
 	residualPublisher = n.advertise<std_msgs::Float32>("residual", 1);
 	
 	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
+	markerPublisher = n.advertise<visualization_msgs::MarkerArray>("cov_markers", 2, true);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
 	filteredCloudPublisher = n.advertise<sensor_msgs::PointCloud2>("filtered_cloud", messageQueueSize);
 	

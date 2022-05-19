@@ -18,6 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
   libpointmatcher_ros
   std_msgs
   imu_odom
+  visualization_msgs
   )
 
 find_package(libpointmatcher REQUIRED)

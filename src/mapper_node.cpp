@@ -110,6 +110,44 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 {
 	try
 	{
+		float signedSaturationDurationAngularSpeedX = 0;
+		float signedSaturationDurationAngularSpeedY = 0;
+		float signedSaturationDurationAngularSpeedZ = 0;
+		inertiaMeasurementsMutex.lock();
+		for(auto it = inertiaMeasurements.begin(); it != inertiaMeasurements.end(); ++it)
+		{
+			if(it->header.stamp >= timeStamp - ros::Duration(0.1) && it->header.stamp < timeStamp)
+			{
+				if(std::fabs(it->angular_velocity.x - params->maxAngularSpeed) < 1e-3)
+				{
+					signedSaturationDurationAngularSpeedX += 0.01;
+				}
+				else if(std::fabs(it->angular_velocity.x + params->maxAngularSpeed) < 1e-3)
+				{
+					signedSaturationDurationAngularSpeedX -= 0.01;
+				}
+
+				if(std::fabs(it->angular_velocity.y - params->maxAngularSpeed) < 1e-3)
+				{
+					signedSaturationDurationAngularSpeedY += 0.01;
+				}
+				else if(std::fabs(it->angular_velocity.y + params->maxAngularSpeed) < 1e-3)
+				{
+					signedSaturationDurationAngularSpeedY -= 0.01;
+				}
+
+				if(std::fabs(it->angular_velocity.z - params->maxAngularSpeed) < 1e-3)
+				{
+					signedSaturationDurationAngularSpeedZ += 0.01;
+				}
+				else if(std::fabs(it->angular_velocity.z + params->maxAngularSpeed) < 1e-3)
+				{
+					signedSaturationDurationAngularSpeedZ -= 0.01;
+				}
+			}
+		}
+		inertiaMeasurementsMutex.unlock();
+
 		std::vector<imu_odom::Inertia> cloudInertiaMeasurements;
 		if(params->isOnline)
 		{
@@ -202,24 +240,25 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 			angularAccelerationsZ = "0";
 			measureTimes = "0";
 		}
-		
+
 		PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
-		
+
 		PM::TransformationParameters sensorToMapAfterUpdate;
 		if(params->computeResidual && cloudInertiaMeasurements.size() > 0 && nbRegistrations > 0)
 		{
 			PM::DataPoints map = mapper->getMap();
-			
+
 			mapper->processInput(input, sensorToMapBeforeUpdate,
 								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())),
 								 linearSpeedsX, linearSpeedsY, linearSpeedsZ, linearAccelerationsX, linearAccelerationsY,
 								 linearAccelerationsZ, angularSpeedsX, angularSpeedsY, angularSpeedsZ, angularAccelerationsX,
-								 angularAccelerationsY, angularAccelerationsZ, measureTimes);
+								 angularAccelerationsY, angularAccelerationsZ, measureTimes, signedSaturationDurationAngularSpeedX,
+								 signedSaturationDurationAngularSpeedY, signedSaturationDurationAngularSpeedZ);
 			sensorToMapAfterUpdate = mapper->getSensorPose();
 
 			PM::DataPoints inputInMapFrame = transformation->compute(input, sensorToMapAfterUpdate);
-			
+
 			PM::Parameters matcherParams;
 			matcherParams["knn"] = "1";
 			matcherParams["maxDist"] = "1";
@@ -310,30 +349,31 @@ void gotInput(PM::DataPoints input, ros::Time timeStamp)
 								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())),
 								 linearSpeedsX, linearSpeedsY, linearSpeedsZ, linearAccelerationsX, linearAccelerationsY,
 								 linearAccelerationsZ, angularSpeedsX, angularSpeedsY, angularSpeedsZ, angularAccelerationsX,
-								 angularAccelerationsY, angularAccelerationsZ, measureTimes);
+								 angularAccelerationsY, angularAccelerationsZ, measureTimes, signedSaturationDurationAngularSpeedX,
+								 signedSaturationDurationAngularSpeedY, signedSaturationDurationAngularSpeedZ);
 			sensorToMapAfterUpdate = mapper->getSensorPose();
 		}
 
 		sensor_msgs::PointCloud2 filteredCloud = PointMatcher_ROS::pointMatcherCloudToRosMsg<T>(input, params->sensorFrame, timeStamp);
 		filteredCloudPublisher.publish(filteredCloud);
-		
+
 		mapTfLock.lock();
 		odomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
 		mapTfLock.unlock();
-		
+
 		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, params->sensorFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
-		
+
 		if((++nbRegistrations) == 6)
 		{
 			firstIcpOdom = robotToMap;
 		}
 		lastIcpOdom = robotToMap;
-		
+
 		trajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
 		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", params->robotFrame, timeStamp);
 		odomPublisher.publish(odomMsgOut);
-		
+
 		idleTimeLock.lock();
 		lastTimeInputWasProcessed = std::chrono::steady_clock::now();
 		idleTimeLock.unlock();
@@ -517,8 +557,9 @@ int main(int argc, char** argv)
 										  params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
 										  params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
 										  params->useCRVModel, params->useICRAModel, params->isMapping, params->skewModel, params->cornerPointUncertainty, params->uncertaintyThreshold,
-										  params->uncertaintyQuantile, params->softUncertaintyThreshold, params->binaryUncertaintyThreshold, params->afterDeskewing, params->scaleFactor, params->angularSpeedNoiseStd));
-	
+										  params->uncertaintyQuantile, params->softUncertaintyThreshold, params->binaryUncertaintyThreshold, params->afterDeskewing,
+										  params->scaleFactor, params->angularSpeedNoiseStd, params->maxAngularSpeed));
+
 	loadInitialMap();
 	
 	std::ifstream ifs(params->icpConfig.c_str());

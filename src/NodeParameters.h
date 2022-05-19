@@ -66,6 +66,7 @@ public:
 	float binaryUncertaintyThreshold;
 	float scaleFactor;
 	float angularSpeedNoiseStd;
+	float maxAngularSpeed;
 
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };

@@ -59,6 +59,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<float>("binary_uncertainty_threshold", binaryUncertaintyThreshold, 0.03);
 	nodeHandle.param<float>("scale_factor", scaleFactor, 1);
 	nodeHandle.param<float>("angular_speed_noise_std", angularSpeedNoiseStd, 0);
+	nodeHandle.param<float>("max_angular_speed", maxAngularSpeed, 11.f);
 }
 
 void NodeParameters::validateParameters()

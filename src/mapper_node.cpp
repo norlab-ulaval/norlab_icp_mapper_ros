@@ -145,7 +145,7 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 
 		robotTrajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
-		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, "map", params->robotFrame, timeStamp);
+		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, params->mapFrame, params->robotFrame, timeStamp);
 
 		if(!previousTimeStamp.isZero())
 		{
@@ -163,7 +163,7 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 
 		if(!params->publishTfsBetweenRegistrations)
 		{
-			geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map", params->odomFrame, timeStamp);
+			geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, params->mapFrame, params->odomFrame, timeStamp);
 			tfBroadcaster->sendTransform(currentOdomToMapTf);
 		}
 
@@ -281,7 +281,7 @@ void mapPublisherLoop()
 	{
 		if(mapper->getNewLocalMap(newMap))
 		{
-			sensor_msgs::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(newMap, "map", ros::Time::now());
+			sensor_msgs::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(newMap, params->mapFrame, ros::Time::now());
 			mapPublisher.publish(mapMsgOut);
 		}
 
@@ -299,7 +299,7 @@ void mapTfPublisherLoop()
 		PM::TransformationParameters currentOdomToMap = odomToMap;
 		mapTfLock.unlock();
 
-		geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map",
+		geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, params->mapFrame,
 																														params->odomFrame,
 																														ros::Time::now());
 		tfBroadcaster->sendTransform(currentOdomToMapTf);
@@ -337,6 +337,7 @@ int main(int argc, char** argv)
 	}
 
 	std::thread mapperShutdownThread;
+	mapperShutdownThread = std::thread(mapperShutdownLoop);
 	int messageQueueSize;
 	if(params->isOnline)
 	{
@@ -345,7 +346,6 @@ int main(int argc, char** argv)
 	}
 	else
 	{
-		mapperShutdownThread = std::thread(mapperShutdownLoop);
 		tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(ros::Duration(ros::DURATION_MAX)));
 		messageQueueSize = 0;
 	}
@@ -353,7 +353,7 @@ int main(int argc, char** argv)
 	tf2_ros::TransformListener tfListener(*tfBuffer);
 	tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
 
-	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
+	mapPublisher = n.advertise<sensor_msgs::PointCloud2>(params->mapFrame, 2, true);
 	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
 
 	ros::Subscriber sub;
@@ -390,10 +390,7 @@ int main(int argc, char** argv)
 	{
 		mapTfPublisherThread.join();
 	}
-	if(!params->isOnline)
-	{
-		mapperShutdownThread.join();
-	}
+	mapperShutdownThread.join();
 
 	return 0;
 }

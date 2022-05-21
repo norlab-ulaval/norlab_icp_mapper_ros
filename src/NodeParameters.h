@@ -17,6 +17,7 @@ private:
 public:
 	std::string odomFrame;
 	std::string robotFrame;
+	std::string mapFrame;
 	std::string initialMapFileName;
 	std::string initialRobotPoseString;
 	PM::TransformationParameters initialRobotPose;

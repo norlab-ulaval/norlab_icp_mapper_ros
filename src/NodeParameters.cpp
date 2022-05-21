@@ -12,6 +12,7 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 {
 	nodeHandle.param<std::string>("odom_frame", odomFrame, "odom");
 	nodeHandle.param<std::string>("robot_frame", robotFrame, "base_link");
+	nodeHandle.param<std::string>("map_frame", mapFrame, "map");
 	nodeHandle.param<std::string>("initial_map_file_name", initialMapFileName, "");
 	nodeHandle.param<std::string>("initial_robot_pose", initialRobotPoseString, "");
 	nodeHandle.param<std::string>("final_map_file_name", finalMapFileName, "map.vtk");

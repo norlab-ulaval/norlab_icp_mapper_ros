@@ -42,6 +42,8 @@ void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
 	nodeHandle.param<bool>("is_mapping", isMapping, true);
 	nodeHandle.param<bool>("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive, true);
 	nodeHandle.param<bool>("publish_tfs_between_registrations", publishTfsBetweenRegistrations, true);
+	nodeHandle.param<int>("ignore_scan_count", ignoreScansCount, 0);
+
 }
 
 void NodeParameters::validateParameters() const
@@ -192,6 +194,12 @@ void NodeParameters::validateParameters() const
 	{
 		throw std::runtime_error("is mapping is set to false, but initial map file name was not specified.");
 	}
+
+	if(ignoreScansCount < 0)
+	{
+		throw std::runtime_error("ignoreScansCount must be >= 0.");
+	}
+	ROS_INFO("Ignoring each %d scan", ignoreScansCount);
 }
 
 void NodeParameters::parseComplexParameters()

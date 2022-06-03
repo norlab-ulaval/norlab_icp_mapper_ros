@@ -32,6 +32,8 @@ PM::TransformationParameters robotPoseToSet;
 PM::TransformationParameters previousRobotToMap;
 ros::Time previousTimeStamp;
 
+int ignoredScans = 0;
+
 std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
 {
 	std::string::size_type const extensionPosition(filePath.find_last_of('.'));
@@ -179,12 +181,30 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 
 void pointCloud2Callback(const sensor_msgs::PointCloud2& cloudMsgIn)
 {
-	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+	if (ignoredScans == params->ignoreScansCount)
+	{
+		ROS_DEBUG("Using scan %d", cloudMsgIn.header.seq);
+		gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+		ignoredScans = 0;
+	}
+	else
+	{
+		ROS_DEBUG("Ignoring scan %d", cloudMsgIn.header.seq);
+		ignoredScans++;
+	}
 }
 
 void laserScanCallback(const sensor_msgs::LaserScan& scanMsgIn)
 {
-	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+	if (ignoredScans == params->ignoreScansCount)
+	{
+		gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+		ignoredScans = 0;
+	}
+	else
+	{
+		ignoredScans++;
+	}
 }
 
 bool reloadYamlConfigCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)

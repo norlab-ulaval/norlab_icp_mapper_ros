@@ -48,7 +48,7 @@ public:
 	bool isMapping;
 	bool saveMapCellsOnHardDrive;
 	bool publishTfsBetweenRegistrations;
-
+	int ignoreScansCount;
 	NodeParameters(ros::NodeHandle privateNodeHandle);
 };
 

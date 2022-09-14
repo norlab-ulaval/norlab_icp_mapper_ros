@@ -1,46 +1,82 @@
 #include "NodeParameters.h"
 #include <fstream>
 
-NodeParameters::NodeParameters(ros::NodeHandle privateNodeHandle)
+NodeParameters::NodeParameters(rclcpp::Node& node)
 {
-	retrieveParameters(privateNodeHandle);
-	parseComplexParameters();
-	validateParameters();
+    declareParameters(node);
+    retrieveParameters(node);
+    parseComplexParameters();
+    validateParameters();
 }
 
-void NodeParameters::retrieveParameters(const ros::NodeHandle& nodeHandle)
+void NodeParameters::declareParameters(rclcpp::Node& node)
 {
-	nodeHandle.param<std::string>("odom_frame", odomFrame, "odom");
-	nodeHandle.param<std::string>("robot_frame", robotFrame, "base_link");
-	nodeHandle.param<std::string>("initial_map_file_name", initialMapFileName, "");
-	nodeHandle.param<std::string>("initial_robot_pose", initialRobotPoseString, "");
-	nodeHandle.param<std::string>("final_map_file_name", finalMapFileName, "map.vtk");
-	nodeHandle.param<std::string>("final_trajectory_file_name", finalTrajectoryFileName, "trajectory.vtk");
-	nodeHandle.param<std::string>("icp_config", icpConfig, "");
-	nodeHandle.param<std::string>("input_filters_config", inputFiltersConfig, "");
-	nodeHandle.param<std::string>("map_post_filters_config", mapPostFiltersConfig, "");
-	nodeHandle.param<std::string>("map_update_condition", mapUpdateCondition, "overlap");
-	nodeHandle.param<float>("map_update_overlap", mapUpdateOverlap, 0.9);
-	nodeHandle.param<float>("map_update_delay", mapUpdateDelay, 1);
-	nodeHandle.param<float>("map_update_distance", mapUpdateDistance, 0.5);
-	nodeHandle.param<float>("map_publish_rate", mapPublishRate, 10);
-	nodeHandle.param<float>("map_tf_publish_rate", mapTfPublishRate, 10);
-	nodeHandle.param<float>("max_idle_time", maxIdleTime, 10);
-	nodeHandle.param<float>("min_dist_new_point", minDistNewPoint, 0.03);
-	nodeHandle.param<float>("sensor_max_range", sensorMaxRange, 80);
-	nodeHandle.param<float>("prior_dynamic", priorDynamic, 0.6);
-	nodeHandle.param<float>("threshold_dynamic", thresholdDynamic, 0.9);
-	nodeHandle.param<float>("beam_half_angle", beamHalfAngle, 0.01);
-	nodeHandle.param<float>("epsilon_a", epsilonA, 0.01);
-	nodeHandle.param<float>("epsilon_d", epsilonD, 0.01);
-	nodeHandle.param<float>("alpha", alpha, 0.8);
-	nodeHandle.param<float>("beta", beta, 0.99);
-	nodeHandle.param<bool>("is_3D", is3D, true);
-	nodeHandle.param<bool>("is_online", isOnline, true);
-	nodeHandle.param<bool>("compute_prob_dynamic", computeProbDynamic, false);
-	nodeHandle.param<bool>("is_mapping", isMapping, true);
-	nodeHandle.param<bool>("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive, true);
-	nodeHandle.param<bool>("publish_tfs_between_registrations", publishTfsBetweenRegistrations, true);
+    node.declare_parameter<std::string>("odom_frame", "odom");
+    node.declare_parameter<std::string>("robot_frame", "base_link");
+    node.declare_parameter<std::string>("initial_map_file_name", "");
+    node.declare_parameter<std::string>("initial_robot_pose", "");
+    node.declare_parameter<std::string>("final_map_file_name", "map.vtk");
+    node.declare_parameter<std::string>("final_trajectory_file_name", "trajectory.vtk");
+    node.declare_parameter<std::string>("icp_config", "");
+    node.declare_parameter<std::string>("input_filters_config", "");
+    node.declare_parameter<std::string>("map_post_filters_config", "");
+    node.declare_parameter<std::string>("map_update_condition", "overlap");
+    node.declare_parameter<float>("map_update_overlap", 0.9);
+    node.declare_parameter<float>("map_update_delay", 1);
+    node.declare_parameter<float>("map_update_distance", 0.5);
+    node.declare_parameter<float>("map_publish_rate", 10);
+    node.declare_parameter<float>("map_tf_publish_rate", 10);
+    node.declare_parameter<float>("max_idle_time", 10);
+    node.declare_parameter<float>("min_dist_new_point", 0.03);
+    node.declare_parameter<float>("sensor_max_range", 80);
+    node.declare_parameter<float>("prior_dynamic", 0.6);
+    node.declare_parameter<float>("threshold_dynamic", 0.9);
+    node.declare_parameter<float>("beam_half_angle", 0.01);
+    node.declare_parameter<float>("epsilon_a", 0.01);
+    node.declare_parameter<float>("epsilon_d", 0.01);
+    node.declare_parameter<float>("alpha", 0.8);
+    node.declare_parameter<float>("beta", 0.99);
+    node.declare_parameter<bool>("is_3D", true);
+    node.declare_parameter<bool>("is_online", true);
+    node.declare_parameter<bool>("compute_prob_dynamic", false);
+    node.declare_parameter<bool>("is_mapping", true);
+    node.declare_parameter<bool>("save_map_cells_on_hard_drive", true);
+    node.declare_parameter<bool>("publish_tfs_between_registrations", true);
+}
+
+void NodeParameters::retrieveParameters(rclcpp::Node& node)
+{
+	node.get_parameter("odom_frame", odomFrame);
+	node.get_parameter("robot_frame", robotFrame);
+	node.get_parameter("initial_map_file_name", initialMapFileName);
+	node.get_parameter("initial_robot_pose", initialRobotPoseString);
+	node.get_parameter("final_map_file_name", finalMapFileName);
+	node.get_parameter("final_trajectory_file_name", finalTrajectoryFileName);
+	node.get_parameter("icp_config", icpConfig);
+	node.get_parameter("input_filters_config", inputFiltersConfig);
+	node.get_parameter("map_post_filters_config", mapPostFiltersConfig);
+	node.get_parameter("map_update_condition", mapUpdateCondition);
+	node.get_parameter("map_update_overlap", mapUpdateOverlap);
+	node.get_parameter("map_update_delay", mapUpdateDelay);
+	node.get_parameter("map_update_distance", mapUpdateDistance);
+	node.get_parameter("map_publish_rate", mapPublishRate);
+	node.get_parameter("map_tf_publish_rate", mapTfPublishRate);
+	node.get_parameter("max_idle_time", maxIdleTime);
+	node.get_parameter("min_dist_new_point", minDistNewPoint);
+	node.get_parameter("sensor_max_range", sensorMaxRange);
+	node.get_parameter("prior_dynamic", priorDynamic);
+	node.get_parameter("threshold_dynamic", thresholdDynamic);
+	node.get_parameter("beam_half_angle", beamHalfAngle);
+	node.get_parameter("epsilon_a", epsilonA);
+	node.get_parameter("epsilon_d", epsilonD);
+	node.get_parameter("alpha", alpha);
+	node.get_parameter("beta", beta);
+	node.get_parameter("is_3D", is3D);
+	node.get_parameter("is_online", isOnline);
+	node.get_parameter("compute_prob_dynamic", computeProbDynamic);
+	node.get_parameter("is_mapping", isMapping);
+	node.get_parameter("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive);
+	node.get_parameter("publish_tfs_between_registrations", publishTfsBetweenRegistrations);
 }
 
 void NodeParameters::validateParameters() const

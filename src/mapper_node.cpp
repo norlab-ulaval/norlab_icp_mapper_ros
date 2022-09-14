@@ -1,399 +1,394 @@
 #include "NodeParameters.h"
-#include <ros/ros.h>
-#include <tf2_ros/transform_broadcaster.h>
-#include <tf2_ros/transform_listener.h>
+#include <rclcpp/rclcpp.hpp>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
-#include <std_srvs/Empty.h>
-#include "norlab_icp_mapper_ros/SaveMap.h"
-#include "norlab_icp_mapper_ros/LoadMap.h"
-#include "norlab_icp_mapper_ros/SaveTrajectory.h"
-#include <geometry_msgs/Pose.h>
+#include <norlab_icp_mapper/Trajectory.h>
+#include <norlab_icp_mapper_ros/srv/save_map.hpp>
+#include <norlab_icp_mapper_ros/srv/load_map.hpp>
+#include <norlab_icp_mapper_ros/srv/save_trajectory.hpp>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_broadcaster.h>
+#include <geometry_msgs/msg/pose.hpp>
+#include <std_srvs/srv/empty.hpp>
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <norlab_icp_mapper/Trajectory.h>
 
-typedef PointMatcher<float> PM;
-
-std::unique_ptr<NodeParameters> params;
-std::shared_ptr<PM::Transformation> transformation;
-std::unique_ptr<norlab_icp_mapper::Mapper> mapper;
-std::unique_ptr<Trajectory> robotTrajectory;
-PM::TransformationParameters odomToMap;
-ros::Publisher mapPublisher;
-ros::Publisher odomPublisher;
-std::unique_ptr<tf2_ros::Buffer> tfBuffer;
-std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
-std::mutex mapTfLock;
-std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;
-std::mutex idleTimeLock;
-bool hasToSetRobotPose;
-PM::TransformationParameters robotPoseToSet;
-PM::TransformationParameters previousRobotToMap;
-ros::Time previousTimeStamp;
-
-std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
+class MapperNode : public rclcpp::Node
 {
-	std::string::size_type const extensionPosition(filePath.find_last_of('.'));
-	std::string mapPathWithoutExtension = filePath.substr(0, extensionPosition);
-	std::string extension = filePath.substr(extensionPosition, filePath.length()-1);
+public:
+    MapperNode() :
+            Node("mapper_node")
+    {
+        params = std::unique_ptr<NodeParameters>(new NodeParameters(*this));
 
-	return mapPathWithoutExtension + suffix + extension;
-}
+        transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
 
-void saveMap(const std::string& mapFileName)
-{
-	ROS_INFO("Saving map to %s", mapFileName.c_str());
-	mapper->getMap().save(mapFileName);
-}
+        mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(new norlab_icp_mapper::Mapper(params->inputFiltersConfig, params->icpConfig,
+                                                                                          params->mapPostFiltersConfig, params->mapUpdateCondition,
+                                                                                          params->mapUpdateOverlap, params->mapUpdateDelay,
+                                                                                          params->mapUpdateDistance, params->minDistNewPoint,
+                                                                                          params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic,
+                                                                                          params->beamHalfAngle, params->epsilonA, params->epsilonD, params->alpha,
+                                                                                          params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
+                                                                                          params->isMapping, params->saveMapCellsOnHardDrive));
 
-void loadMap(const std::string& mapFileName)
-{
-	ROS_INFO("Loading map from %s", mapFileName.c_str());
-	PM::DataPoints map = PM::DataPoints::load(mapFileName);
-	int euclideanDim = params->is3D ? 3 : 2;
-	if(map.getEuclideanDim() != euclideanDim)
-	{
-		throw std::runtime_error("Invalid map dimension");
-	}
-	mapper->setMap(map);
-}
+        if(!params->initialMapFileName.empty())
+        {
+            loadMap(params->initialMapFileName);
+        }
+        if(!params->initialRobotPoseString.empty())
+        {
+            setRobotPose(params->initialRobotPose);
+        }
 
-void setRobotPose(const PM::TransformationParameters& robotPose)
-{
-	robotPoseToSet = robotPose;
-	hasToSetRobotPose = true;
-}
+        int messageQueueSize;
+        if(params->isOnline)
+        {
+            tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(this->get_clock()));
+            messageQueueSize = 1;
+        }
+        else
+        {
+            mapperShutdownThread = std::thread(&MapperNode::mapperShutdownLoop, this);
+            tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(this->get_clock(), tf2::Duration::max()));
+            messageQueueSize = 0;
+        }
 
-void saveTrajectory(const std::string& trajectoryFileName)
-{
-	ROS_INFO("Saving trajectory to %s", trajectoryFileName.c_str());
-	robotTrajectory->save(trajectoryFileName);
-}
+        tfListener = std::unique_ptr<tf2_ros::TransformListener>(new tf2_ros::TransformListener(*tfBuffer));
+        tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster(*this));
 
-void mapperShutdownLoop()
-{
-	std::chrono::duration<float> idleTime = std::chrono::duration<float>::zero();
+        mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", 2);
+        odomPublisher = this->create_publisher<nav_msgs::msg::Odometry>("icp_odom", 50);
 
-	while(ros::ok())
-	{
-		idleTimeLock.lock();
-		if(lastTimeInputWasProcessed.time_since_epoch().count())
-		{
-			idleTime = std::chrono::steady_clock::now() - lastTimeInputWasProcessed;
-		}
-		idleTimeLock.unlock();
+        if(params->is3D)
+        {
+            robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
+            odomToMap = PM::Matrix::Identity(4, 4);
+            pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", messageQueueSize,
+                                                                                               std::bind(&MapperNode::pointCloud2Callback, this,
+                                                                                                         std::placeholders::_1));
+        }
+        else
+        {
+            robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
+            odomToMap = PM::Matrix::Identity(3, 3);
+            laserScanSubscription = this->create_subscription<sensor_msgs::msg::LaserScan>("points_in", messageQueueSize,
+                                                                                               std::bind(&MapperNode::laserScanCallback, this,
+                                                                                                         std::placeholders::_1));
+        }
 
-		if(idleTime > std::chrono::duration<float>(params->maxIdleTime))
-		{
-			saveMap(params->finalMapFileName);
-			saveTrajectory(params->finalTrajectoryFileName);
-			ROS_INFO("Shutting down ROS");
-			ros::shutdown();
-		}
+        reloadYamlConfigService = this->create_service<std_srvs::srv::Empty>("reload_yaml_config",
+                                                                             std::bind(&MapperNode::reloadYamlConfigCallback, this, std::placeholders::_1,
+                                                                                       std::placeholders::_2));
+        saveMapService = this->create_service<norlab_icp_mapper_ros::srv::SaveMap>("save_map",
+                                                                                   std::bind(&MapperNode::saveMapCallback, this, std::placeholders::_1,
+                                                                                             std::placeholders::_2));
+        loadMapService = this->create_service<norlab_icp_mapper_ros::srv::LoadMap>("load_map",
+                                                                                   std::bind(&MapperNode::loadMapCallback, this, std::placeholders::_1,
+                                                                                             std::placeholders::_2));
+        saveTrajectoryService = this->create_service<norlab_icp_mapper_ros::srv::SaveTrajectory>("save_trajectory",
+                                                                                                 std::bind(&MapperNode::saveTrajectoryCallback, this,
+                                                                                                           std::placeholders::_1, std::placeholders::_2));
+        enableMappingService = this->create_service<std_srvs::srv::Empty>("enable_mapping",
+                                                                          std::bind(&MapperNode::enableMappingCallback, this, std::placeholders::_1,
+                                                                                    std::placeholders::_2));
+        disableMappingService = this->create_service<std_srvs::srv::Empty>("disable_mapping",
+                                                                           std::bind(&MapperNode::disableMappingCallback, this, std::placeholders::_1,
+                                                                                     std::placeholders::_2));
 
-		std::this_thread::sleep_for(std::chrono::duration<float>(0.1));
-	}
-}
+        mapPublisherThread = std::thread(&MapperNode::mapPublisherLoop, this);
+        if(params->publishTfsBetweenRegistrations)
+        {
+            mapTfPublisherThread = std::thread(&MapperNode::mapTfPublisherLoop, this);
+        }
+    }
 
-PM::TransformationParameters findTransform(const std::string& sourceFrame, const std::string& targetFrame, const ros::Time& time, const int& transformDimension)
-{
-	geometry_msgs::TransformStamped tf = tfBuffer->lookupTransform(targetFrame, sourceFrame, time, ros::Duration(0.1));
-	return PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(tf, transformDimension);
-}
+private:
+    typedef PointMatcher<float> PM;
 
-void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const ros::Time& timeStamp)
-{
-	try
-	{
-		PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
-		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
+    std::unique_ptr<NodeParameters> params;
+    std::shared_ptr<PM::Transformation> transformation;
+    std::unique_ptr<norlab_icp_mapper::Mapper> mapper;
+    PM::TransformationParameters robotPoseToSet;
+    bool hasToSetRobotPose;
+    std::thread mapperShutdownThread;
+    std::mutex idleTimeLock;
+    std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;
+    std::unique_ptr<tf2_ros::Buffer> tfBuffer;
+    std::unique_ptr<tf2_ros::TransformListener> tfListener;
+    std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
+    std::unique_ptr<Trajectory> robotTrajectory;
+    std::mutex mapTfLock;
+    PM::TransformationParameters odomToMap;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr mapPublisher;
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
+    rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
+    PM::TransformationParameters previousRobotToMap;
+    rclcpp::Time previousTimeStamp;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reloadYamlConfigService;
+    rclcpp::Service<norlab_icp_mapper_ros::srv::SaveMap>::SharedPtr saveMapService;
+    rclcpp::Service<norlab_icp_mapper_ros::srv::LoadMap>::SharedPtr loadMapService;
+    rclcpp::Service<norlab_icp_mapper_ros::srv::SaveTrajectory>::SharedPtr saveTrajectoryService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr enableMappingService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr disableMappingService;
+    std::thread mapPublisherThread;
+    std::thread mapTfPublisherThread;
 
-		if(hasToSetRobotPose)
-		{
-			PM::TransformationParameters sensorToRobot = findTransform(sensorFrame, params->robotFrame, timeStamp, input.getHomogeneousDim());
-			sensorToMapBeforeUpdate = robotPoseToSet * sensorToRobot;
-			hasToSetRobotPose = false;
-		}
-		try
-		{
-			mapper->processInput(input, sensorToMapBeforeUpdate,
-								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
-		}
-		catch (const PM::ConvergenceError& convergenceError)
-		{
-			ROS_ERROR_STREAM("Unable to process input: " << convergenceError.what());
-			try
-			{
-				saveTrajectory(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error"));
-				saveMap(appendToFilePath(params->finalMapFileName, "_convergence_error"));
-			}
-			catch(const std::runtime_error& runtimeError)
-			{
-				ROS_ERROR_STREAM("Unable to save: " << runtimeError.what());
-			}
-			throw;
-		}
-		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
+    std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
+    {
+        std::string::size_type const extensionPosition(filePath.find_last_of('.'));
+        std::string mapPathWithoutExtension = filePath.substr(0, extensionPosition);
+        std::string extension = filePath.substr(extensionPosition, filePath.length()-1);
 
-		PM::TransformationParameters currentOdomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
-		mapTfLock.lock();
-		odomToMap = currentOdomToMap;
-		mapTfLock.unlock();
+        return mapPathWithoutExtension + suffix + extension;
+    }
 
-		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
-		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
+    void saveMap(const std::string& mapFileName)
+    {
+        RCLCPP_INFO(this->get_logger(), "Saving map to %s", mapFileName.c_str());
+        mapper->getMap().save(mapFileName);
+    }
 
-		robotTrajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
-		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, "map", params->robotFrame, timeStamp);
+    void loadMap(const std::string& mapFileName)
+    {
+        RCLCPP_INFO(this->get_logger(), "Loading map from %s", mapFileName.c_str());
+        PM::DataPoints map = PM::DataPoints::load(mapFileName);
+        int euclideanDim = params->is3D ? 3 : 2;
+        if(map.getEuclideanDim() != euclideanDim)
+        {
+            throw std::runtime_error("Invalid map dimension");
+        }
+        mapper->setMap(map);
+    }
 
-		if(!previousTimeStamp.isZero())
-		{
-			Eigen::Vector3f linearDisplacement = robotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
-			float deltaTime = (float) (timeStamp - previousTimeStamp).toSec();
-			Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
-			odomMsgOut.twist.twist.linear.x = linearVelocity(0);
-			odomMsgOut.twist.twist.linear.y = linearVelocity(1);
-			odomMsgOut.twist.twist.linear.z = linearVelocity(2);
-		}
-		previousTimeStamp = timeStamp;
-		previousRobotToMap = robotToMap;
+    void setRobotPose(const PM::TransformationParameters& robotPose)
+    {
+        robotPoseToSet = robotPose;
+        hasToSetRobotPose = true;
+    }
 
-		odomPublisher.publish(odomMsgOut);
+    void saveTrajectory(const std::string& trajectoryFileName)
+    {
+        RCLCPP_INFO(this->get_logger(), "Saving trajectory to %s", trajectoryFileName.c_str());
+        robotTrajectory->save(trajectoryFileName);
+    }
 
-		if(!params->publishTfsBetweenRegistrations)
-		{
-			geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map", params->odomFrame, timeStamp);
-			tfBroadcaster->sendTransform(currentOdomToMapTf);
-		}
+    void mapperShutdownLoop()
+    {
+        std::chrono::duration<float> idleTime = std::chrono::duration<float>::zero();
 
-		idleTimeLock.lock();
-		lastTimeInputWasProcessed = std::chrono::steady_clock::now();
-		idleTimeLock.unlock();
-	}
-	catch(const tf2::TransformException& ex)
-	{
-		ROS_WARN("%s", ex.what());
-	}
-}
+        while(rclcpp::ok())
+        {
+            idleTimeLock.lock();
+            if(lastTimeInputWasProcessed.time_since_epoch().count())
+            {
+                idleTime = std::chrono::steady_clock::now() - lastTimeInputWasProcessed;
+            }
+            idleTimeLock.unlock();
 
-void pointCloud2Callback(const sensor_msgs::PointCloud2& cloudMsgIn)
-{
-	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
-}
+            if(idleTime > std::chrono::duration<float>(params->maxIdleTime))
+            {
+                saveMap(params->finalMapFileName);
+                saveTrajectory(params->finalTrajectoryFileName);
+                RCLCPP_INFO(this->get_logger(), "Shutting down ROS");
+                rclcpp::shutdown();
+            }
 
-void laserScanCallback(const sensor_msgs::LaserScan& scanMsgIn)
-{
-	gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
-}
+            std::this_thread::sleep_for(std::chrono::duration<float>(0.1));
+        }
+    }
 
-bool reloadYamlConfigCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
-{
-	ROS_INFO("Reloading YAML config");
-	mapper->loadYamlConfig(params->inputFiltersConfig, params->icpConfig, params->mapPostFiltersConfig);
-	return true;
-}
+    PM::TransformationParameters findTransform(const std::string& sourceFrame, const std::string& targetFrame, const rclcpp::Time& time, const int& transformDimension)
+    {
+        geometry_msgs::msg::TransformStamped tf = tfBuffer->lookupTransform(targetFrame, sourceFrame, time, std::chrono::milliseconds(100));
+        return PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(tf, transformDimension);
+    }
 
-bool saveMapCallback(norlab_icp_mapper_ros::SaveMap::Request& req, norlab_icp_mapper_ros::SaveMap::Response& res)
-{
-	try
-	{
-		saveMap(req.map_file_name.data);
-		return true;
-	}
-	catch(const std::runtime_error& e)
-	{
-		ROS_ERROR_STREAM("Unable to save: " << e.what());
-		return false;
-	}
-}
+    void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    {
+        try
+        {
+            PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
+            PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 
-PM::TransformationParameters rosMsgToPointMatcherPose(const geometry_msgs::Pose& pose) // TODO: put this in libpointmatcher_ros
-{
-	Eigen::Vector3f epsilon(pose.orientation.x, pose.orientation.y, pose.orientation.z);
-	float eta = pose.orientation.w;
-	PM::Matrix skewSymmetricEpsilon = PM::Matrix::Zero(3, 3);
-	skewSymmetricEpsilon << 0, -epsilon[2], epsilon[1],
-			epsilon[2], 0, -epsilon[0],
-			-epsilon[1], epsilon[0], 0;
-	PM::Matrix rotationMatrix = (((eta * eta) - epsilon.dot(epsilon)) * PM::Matrix::Identity(3, 3)) +
-								(2 * eta * skewSymmetricEpsilon) + (2 * epsilon * epsilon.transpose());
+            if(hasToSetRobotPose)
+            {
+                PM::TransformationParameters sensorToRobot = findTransform(sensorFrame, params->robotFrame, timeStamp, input.getHomogeneousDim());
+                sensorToMapBeforeUpdate = robotPoseToSet * sensorToRobot;
+                hasToSetRobotPose = false;
+            }
+            try
+            {
+                mapper->processInput(input, sensorToMapBeforeUpdate,
+                                     std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
+            }
+            catch (const PM::ConvergenceError& convergenceError)
+            {
+                RCLCPP_ERROR(this->get_logger(), "Unable to process input: %s", convergenceError.what());
+                try
+                {
+                    saveTrajectory(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error"));
+                    saveMap(appendToFilePath(params->finalMapFileName, "_convergence_error"));
+                }
+                catch(const std::runtime_error& runtimeError)
+                {
+                    RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", runtimeError.what());
+                }
+                throw;
+            }
+            const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
 
-	Eigen::Vector3f positionVector(pose.position.x, pose.position.y, pose.position.z);
+            PM::TransformationParameters currentOdomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
+            mapTfLock.lock();
+            odomToMap = currentOdomToMap;
+            mapTfLock.unlock();
 
-	int euclideanDim = params->is3D ? 3 : 2;
-	PM::TransformationParameters transformationParameters = PM::TransformationParameters::Identity(euclideanDim + 1, euclideanDim + 1);
-	transformationParameters.topLeftCorner(euclideanDim, euclideanDim) = rotationMatrix.topLeftCorner(euclideanDim, euclideanDim);
-	transformationParameters.topRightCorner(euclideanDim, 1) = positionVector.head(euclideanDim);
-	return transformationParameters;
-}
+            PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
+            PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 
-bool loadMapCallback(norlab_icp_mapper_ros::LoadMap::Request& req, norlab_icp_mapper_ros::LoadMap::Response& res)
-{
-	try
-	{
-		loadMap(req.map_file_name.data);
-		setRobotPose(rosMsgToPointMatcherPose(req.pose));
-		robotTrajectory->clearPoints();
-		return true;
-	}
-	catch(const std::runtime_error& e)
-	{
-		ROS_ERROR_STREAM("Unable to load: " << e.what());
-		return false;
-	}
-}
+            robotTrajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
+            nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, "map", params->robotFrame, timeStamp);
 
-bool saveTrajectoryCallback(norlab_icp_mapper_ros::SaveTrajectory::Request& req, norlab_icp_mapper_ros::SaveTrajectory::Response& res)
-{
-	try
-	{
-		saveTrajectory(req.trajectory_file_name.data);
-		return true;
-	}
-	catch(const std::runtime_error& e)
-	{
-		ROS_ERROR_STREAM("Unable to save: " << e.what());
-		return false;
-	}
-}
+            if(previousTimeStamp.nanoseconds() != 0)
+            {
+                Eigen::Vector3f linearDisplacement = robotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
+                float deltaTime = (float) (timeStamp - previousTimeStamp).seconds();
+                Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
+                odomMsgOut.twist.twist.linear.x = linearVelocity(0);
+                odomMsgOut.twist.twist.linear.y = linearVelocity(1);
+                odomMsgOut.twist.twist.linear.z = linearVelocity(2);
+            }
+            previousTimeStamp = timeStamp;
+            previousRobotToMap = robotToMap;
 
-bool enableMappingCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
-{
-	ROS_INFO("Enabling mapping");
-	mapper->setIsMapping(true);
-	return true;
-}
+            odomPublisher->publish(odomMsgOut);
 
-bool disableMappingCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
-{
-	ROS_INFO("Disabling mapping");
-	mapper->setIsMapping(false);
-	return true;
-}
+            if(!params->publishTfsBetweenRegistrations)
+            {
+                geometry_msgs::msg::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map", params->odomFrame, timeStamp);
+                tfBroadcaster->sendTransform(currentOdomToMapTf);
+            }
 
-void mapPublisherLoop()
-{
-	ros::Rate publishRate(params->mapPublishRate);
+            idleTimeLock.lock();
+            lastTimeInputWasProcessed = std::chrono::steady_clock::now();
+            idleTimeLock.unlock();
+        }
+        catch(const tf2::TransformException& ex)
+        {
+            RCLCPP_WARN(this->get_logger(), "%s", ex.what());
+        }
+    }
 
-	PM::DataPoints newMap;
-	while(ros::ok())
-	{
-		if(mapper->getNewLocalMap(newMap))
-		{
-			sensor_msgs::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(newMap, "map", ros::Time::now());
-			mapPublisher.publish(mapMsgOut);
-		}
+    void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
+    {
+        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+    }
 
-		publishRate.sleep();
-	}
-}
+    void laserScanCallback(const sensor_msgs::msg::LaserScan& scanMsgIn)
+    {
+        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+    }
 
-void mapTfPublisherLoop()
-{
-	ros::Rate publishRate(params->mapTfPublishRate);
+    void mapPublisherLoop()
+    {
+        rclcpp::Rate publishRate(params->mapPublishRate);
 
-	while(ros::ok())
-	{
-		mapTfLock.lock();
-		PM::TransformationParameters currentOdomToMap = odomToMap;
-		mapTfLock.unlock();
+        PM::DataPoints newMap;
+        while(rclcpp::ok())
+        {
+            if(mapper->getNewLocalMap(newMap))
+            {
+                sensor_msgs::msg::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(newMap, "map", this->get_clock()->now());
+                mapPublisher->publish(mapMsgOut);
+            }
 
-		geometry_msgs::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map",
-																														params->odomFrame,
-																														ros::Time::now());
-		tfBroadcaster->sendTransform(currentOdomToMapTf);
+            publishRate.sleep();
+        }
+    }
 
-		publishRate.sleep();
-	}
-}
+    void mapTfPublisherLoop()
+    {
+        rclcpp::Rate publishRate(params->mapTfPublishRate);
+
+        while(rclcpp::ok())
+        {
+            mapTfLock.lock();
+            PM::TransformationParameters currentOdomToMap = odomToMap;
+            mapTfLock.unlock();
+
+            geometry_msgs::msg::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map",
+                                                                                                                            params->odomFrame,
+                                                                                                                            this->get_clock()->now());
+            tfBroadcaster->sendTransform(currentOdomToMapTf);
+
+            publishRate.sleep();
+        }
+    }
+
+    void reloadYamlConfigCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    {
+    	RCLCPP_INFO(this->get_logger(), "Reloading YAML config");
+    	mapper->loadYamlConfig(params->inputFiltersConfig, params->icpConfig, params->mapPostFiltersConfig);
+    }
+
+    void saveMapCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Response> res)
+    {
+    	try
+    	{
+    		saveMap(req->map_file_name.data);
+    	}
+    	catch(const std::runtime_error& e)
+    	{
+    		RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", e.what());
+    	}
+    }
+
+    void loadMapCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::LoadMap::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::LoadMap::Response> res)
+    {
+    	try
+    	{
+    		loadMap(req->map_file_name.data);
+            int homogeneousDim = params->is3D ? 4 : 3;
+            setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(req->pose, homogeneousDim));
+    		robotTrajectory->clearPoints();
+    	}
+    	catch(const std::runtime_error& e)
+    	{
+    		RCLCPP_ERROR(this->get_logger(), "Unable to load: %s", e.what());
+    	}
+    }
+
+    void saveTrajectoryCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::SaveTrajectory::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::SaveTrajectory::Response> res)
+    {
+    	try
+    	{
+    		saveTrajectory(req->trajectory_file_name.data);
+    	}
+    	catch(const std::runtime_error& e)
+    	{
+    		RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", e.what());
+    	}
+    }
+
+    void enableMappingCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    {
+    	RCLCPP_INFO(this->get_logger(), "Enabling mapping");
+    	mapper->setIsMapping(true);
+    }
+
+    void disableMappingCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    {
+        RCLCPP_INFO(this->get_logger(), "Disabling mapping");
+    	mapper->setIsMapping(false);
+    }
+};
 
 int main(int argc, char** argv)
 {
-	ros::init(argc, argv, "mapper_node");
-	ros::NodeHandle n;
-	ros::NodeHandle pn("~");
-
-	params = std::unique_ptr<NodeParameters>(new NodeParameters(pn));
-
-	transformation = PM::get().TransformationRegistrar.create("RigidTransformation");
-
-	mapper = std::unique_ptr<norlab_icp_mapper::Mapper>(new norlab_icp_mapper::Mapper(params->inputFiltersConfig, params->icpConfig,
-																					  params->mapPostFiltersConfig, params->mapUpdateCondition,
-																					  params->mapUpdateOverlap, params->mapUpdateDelay,
-																					  params->mapUpdateDistance, params->minDistNewPoint,
-																					  params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic,
-																					  params->beamHalfAngle, params->epsilonA, params->epsilonD, params->alpha,
-																					  params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
-																					  params->isMapping, params->saveMapCellsOnHardDrive));
-
-	if(!params->initialMapFileName.empty())
-	{
-		loadMap(params->initialMapFileName);
-	}
-	if(!params->initialRobotPoseString.empty())
-	{
-		setRobotPose(params->initialRobotPose);
-	}
-
-	std::thread mapperShutdownThread;
-	int messageQueueSize;
-	if(params->isOnline)
-	{
-		tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer);
-		messageQueueSize = 1;
-	}
-	else
-	{
-		mapperShutdownThread = std::thread(mapperShutdownLoop);
-		tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(ros::Duration(ros::DURATION_MAX)));
-		messageQueueSize = 0;
-	}
-
-	tf2_ros::TransformListener tfListener(*tfBuffer);
-	tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster);
-
-	mapPublisher = n.advertise<sensor_msgs::PointCloud2>("map", 2, true);
-	odomPublisher = n.advertise<nav_msgs::Odometry>("icp_odom", 50, true);
-
-	ros::Subscriber sub;
-	if(params->is3D)
-	{
-		robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
-		odomToMap = PM::Matrix::Identity(4, 4);
-		sub = n.subscribe("points_in", messageQueueSize, pointCloud2Callback);
-	}
-	else
-	{
-		robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
-		odomToMap = PM::Matrix::Identity(3, 3);
-		sub = n.subscribe("points_in", messageQueueSize, laserScanCallback);
-	}
-
-	ros::ServiceServer reloadYamlConfigService = n.advertiseService("reload_yaml_config", reloadYamlConfigCallback);
-	ros::ServiceServer saveMapService = n.advertiseService("save_map", saveMapCallback);
-	ros::ServiceServer loadMapService = n.advertiseService("load_map", loadMapCallback);
-	ros::ServiceServer saveTrajectoryService = n.advertiseService("save_trajectory", saveTrajectoryCallback);
-	ros::ServiceServer enableMappingService = n.advertiseService("enable_mapping", enableMappingCallback);
-	ros::ServiceServer disableMappingService = n.advertiseService("disable_mapping", disableMappingCallback);
-
-	std::thread mapPublisherThread = std::thread(mapPublisherLoop);
-	std::thread mapTfPublisherThread;
-	if(params->publishTfsBetweenRegistrations)
-	{
-		mapTfPublisherThread = std::thread(mapTfPublisherLoop);
-	}
-	ros::spin();
-
-	mapPublisherThread.join();
-	if(params->publishTfsBetweenRegistrations)
-	{
-		mapTfPublisherThread.join();
-	}
-	if(!params->isOnline)
-	{
-		mapperShutdownThread.join();
-	}
-
-	return 0;
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<MapperNode>());
+    rclcpp::shutdown();
+    return 0;
 }

@@ -1,7 +1,7 @@
 #ifndef NODE_PARAMETERS_H
 #define NODE_PARAMETERS_H
 
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 #include <norlab_icp_mapper/Mapper.h>
 
 class NodeParameters
@@ -9,7 +9,8 @@ class NodeParameters
 private:
 	typedef PointMatcher<float> PM;
 
-	void retrieveParameters(const ros::NodeHandle& nodeHandle);
+	void declareParameters(rclcpp::Node& node);
+	void retrieveParameters(rclcpp::Node& node);
 	void validateParameters() const;
 	void parseComplexParameters();
 	void parseInitialRobotPose();
@@ -48,7 +49,7 @@ public:
 	bool saveMapCellsOnHardDrive;
 	bool publishTfsBetweenRegistrations;
 
-	NodeParameters(ros::NodeHandle privateNodeHandle);
+	NodeParameters(rclcpp::Node& node);
 };
 
 #endif

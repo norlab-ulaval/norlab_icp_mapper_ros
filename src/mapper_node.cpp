@@ -311,17 +311,23 @@ private:
     {
         rclcpp::Rate publishRate(params->mapTfPublishRate);
 
+        auto lastTime = this->get_clock()->now();
+
         while(rclcpp::ok())
         {
             mapTfLock.lock();
             PM::TransformationParameters currentOdomToMap = odomToMap;
             mapTfLock.unlock();
 
+            auto currTime = this->get_clock()->now();
+
             geometry_msgs::msg::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map",
                                                                                                                             params->odomFrame,
-                                                                                                                            this->get_clock()->now());
-            tfBroadcaster->sendTransform(currentOdomToMapTf);
+                                                                                                                            currTime);
+            if (lastTime != currTime)
+                tfBroadcaster->sendTransform(currentOdomToMapTf);
 
+            lastTime = currTime;
             publishRate.sleep();
         }
     }

@@ -280,14 +280,14 @@ private:
         }
     }
 
-    void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
+    void pointCloud2Callback(const sensor_msgs::msg::PointCloud2::SharedPtr cloudMsgIn)
     {
-        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(*cloudMsgIn), cloudMsgIn->header.frame_id, cloudMsgIn->header.stamp);
     }
 
-    void laserScanCallback(const sensor_msgs::msg::LaserScan& scanMsgIn)
+    void laserScanCallback(const sensor_msgs::msg::LaserScan::SharedPtr scanMsgIn)
     {
-        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(*scanMsgIn), scanMsgIn->header.frame_id, scanMsgIn->header.stamp);
     }
 
     void mapPublisherLoop()

@@ -1,3 +1,6 @@
+#ifndef TRAJECTORY_H
+#define TRAJECTORY_H
+
 #include <Eigen/Dense>
 
 typedef Eigen::Matrix<float, Eigen::Dynamic, 1> Vector;
@@ -16,3 +19,5 @@ private:
 	int dimension;
 	Matrix points;
 };
+
+#endif

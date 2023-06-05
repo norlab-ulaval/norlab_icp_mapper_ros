@@ -32,15 +32,17 @@ public:
                                               params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic, params->beamHalfAngle, params->epsilonA,
                                               params->epsilonD, params->alpha, params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
                                               params->useCRVModel, params->useICRAModel, params->isMapping, params->skewModel, params->cornerPointUncertainty,
-                                              params->uncertaintyThreshold,
-                                              params->uncertaintyQuantile, params->softUncertaintyThreshold, params->binaryUncertaintyThreshold, params->afterDeskewing,
-                                              params->scaleFactor));
+                                              params->uncertaintyThreshold, params->uncertaintyQuantile, params->softUncertaintyThreshold, params->binaryUncertaintyThreshold,
+                                              params->afterDeskewing, params->scaleFactor));
 
         loadInitialMap();
 
-        std::ifstream ifs(params->icpConfig.c_str());
-        icp.loadFromYaml(ifs);
-        ifs.close();
+        if(!params->icpConfig.empty())
+        {
+            std::ifstream ifs(params->icpConfig.c_str());
+            icp.loadFromYaml(ifs);
+            ifs.close();
+        }
 
         lastMarkersSize = 0;
 
@@ -74,7 +76,7 @@ public:
             inertiaQueueSize = 0;
         }
 
-        tf2_ros::TransformListener tfListener(*tfBuffer);
+        tfListener = std::unique_ptr<tf2_ros::TransformListener>(new tf2_ros::TransformListener(*tfBuffer));
         tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster(*this));
 
         mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", 2);
@@ -83,23 +85,31 @@ public:
         filteredCloudPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("filtered_cloud", messageQueueSize);
         residualPublisher = this->create_publisher<std_msgs::msg::Float32>("residual", 1);
 
+        pointCloudCallbackGroup = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        rclcpp::SubscriptionOptions pointCloudSubscriptionOptions;
+        pointCloudSubscriptionOptions.callback_group = pointCloudCallbackGroup;
         if(params->is3D)
         {
             trajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
             odomToMap = PM::Matrix::Identity(4, 4);
             pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", messageQueueSize,
-                                                                                               std::bind(&MapperNode::pointCloud2Callback, this, std::placeholders::_1));
+                                                                                               std::bind(&MapperNode::pointCloud2Callback, this, std::placeholders::_1),
+                                                                                               pointCloudSubscriptionOptions);
         }
         else
         {
             trajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
             odomToMap = PM::Matrix::Identity(3, 3);
             laserScanSubscription = this->create_subscription<sensor_msgs::msg::LaserScan>("points_in", messageQueueSize,
-                                                                                           std::bind(&MapperNode::laserScanCallback, this, std::placeholders::_1));
+                                                                                           std::bind(&MapperNode::laserScanCallback, this, std::placeholders::_1),
+                                                                                           pointCloudSubscriptionOptions);
         }
 
+        inertiaCallbackGroup = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        rclcpp::SubscriptionOptions inertiaSubscriptionOptions;
+        inertiaSubscriptionOptions.callback_group = inertiaCallbackGroup;
         inertiaSubscription = this->create_subscription<imu_odom::msg::Inertia>("inertia_topic", inertiaQueueSize,
-                                                                                std::bind(&MapperNode::inertiaCallback, this, std::placeholders::_1));
+                                                                                std::bind(&MapperNode::inertiaCallback, this, std::placeholders::_1), inertiaSubscriptionOptions);
 
         reloadYamlConfigService = this->create_service<std_srvs::srv::Empty>("reload_yaml_config",
                                                                              std::bind(&MapperNode::reloadYamlConfigCallback, this, std::placeholders::_1, std::placeholders::_2));
@@ -113,6 +123,7 @@ public:
 
     ~MapperNode() // TODO: test if this is really called
     {
+        RCLCPP_ERROR(this->get_logger(), "Destructor");
         mapPublisherThread.join();
         mapTfPublisherThread.join();
         if(!params->isOnline)
@@ -595,9 +606,11 @@ private:
         inertiaMeasurementsMutex.unlock();
         if(params->recordInertia)
         {
-            inertiaFile << rclcpp::Time(msg.header.stamp).seconds() << "," << msg.linear_velocity.x << "," << msg.linear_velocity.y << "," << msg.linear_velocity.z << "," << msg.linear_acceleration.x
+            inertiaFile << rclcpp::Time(msg.header.stamp).seconds() << "," << msg.linear_velocity.x << "," << msg.linear_velocity.y << "," << msg.linear_velocity.z << ","
+                        << msg.linear_acceleration.x
                         << "," << msg.linear_acceleration.y << "," << msg.linear_acceleration.z << "," << msg.angular_velocity.x << "," << msg.angular_velocity.y << ","
-                        << msg.angular_velocity.z << "," << msg.angular_acceleration.x << "," << msg.angular_acceleration.y << "," << msg.angular_acceleration.z << std::endl; // TODO: setprecision(20)?
+                        << msg.angular_velocity.z << "," << msg.angular_acceleration.x << "," << msg.angular_acceleration.y << "," << msg.angular_acceleration.z
+                        << std::endl; // TODO: setprecision(20)?
         }
     }
 
@@ -615,10 +628,13 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
     rclcpp::Subscription<imu_odom::msg::Inertia>::SharedPtr inertiaSubscription;
+    rclcpp::CallbackGroup::SharedPtr pointCloudCallbackGroup;
+    rclcpp::CallbackGroup::SharedPtr inertiaCallbackGroup;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reloadYamlConfigService;
     rclcpp::Service<map_msgs::srv::SaveMap>::SharedPtr saveMapService;
     rclcpp::Service<map_msgs::srv::SaveMap>::SharedPtr saveTrajectoryService;
     std::unique_ptr<tf2_ros::Buffer> tfBuffer;
+    std::unique_ptr<tf2_ros::TransformListener> tfListener;
     std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
     std::mutex mapTfLock;
     std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;

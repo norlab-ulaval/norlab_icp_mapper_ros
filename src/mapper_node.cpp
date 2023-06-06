@@ -121,9 +121,8 @@ public:
         mapTfPublisherThread = std::thread(&MapperNode::mapTfPublisherLoop, this);
     }
 
-    ~MapperNode() // TODO: test if this is really called
+    ~MapperNode()
     {
-        RCLCPP_ERROR(this->get_logger(), "Destructor");
         mapPublisherThread.join();
         mapTfPublisherThread.join();
         if(!params->isOnline)
@@ -410,8 +409,8 @@ private:
                 float angularAcceleration = std::sqrt(std::pow(currentInertia.angular_acceleration.x, 2) + std::pow(currentInertia.angular_acceleration.y, 2) +
                                                       std::pow(currentInertia.angular_acceleration.z, 2));
 
-                meanResidualFile << timeStamp.seconds() << "," << x << "," << y << "," << z << "," << linearSpeed << "," << linearAcceleration << "," << angularSpeed << ","
-                                 << angularAcceleration << "," << meanResidual << std::endl; // TODO: setprecision(20) ?
+                meanResidualFile << std::setprecision(20) << timeStamp.seconds() << "," << x << "," << y << "," << z << "," << linearSpeed << "," << linearAcceleration << ","
+                                 << angularSpeed << "," << angularAcceleration << "," << meanResidual << std::endl;
             }
             else
             {
@@ -606,11 +605,10 @@ private:
         inertiaMeasurementsMutex.unlock();
         if(params->recordInertia)
         {
-            inertiaFile << rclcpp::Time(msg.header.stamp).seconds() << "," << msg.linear_velocity.x << "," << msg.linear_velocity.y << "," << msg.linear_velocity.z << ","
-                        << msg.linear_acceleration.x
-                        << "," << msg.linear_acceleration.y << "," << msg.linear_acceleration.z << "," << msg.angular_velocity.x << "," << msg.angular_velocity.y << ","
-                        << msg.angular_velocity.z << "," << msg.angular_acceleration.x << "," << msg.angular_acceleration.y << "," << msg.angular_acceleration.z
-                        << std::endl; // TODO: setprecision(20)?
+            inertiaFile << std::setprecision(20) << rclcpp::Time(msg.header.stamp).seconds() << "," << msg.linear_velocity.x << "," << msg.linear_velocity.y << ","
+                        << msg.linear_velocity.z << "," << msg.linear_acceleration.x << "," << msg.linear_acceleration.y << "," << msg.linear_acceleration.z << ","
+                        << msg.angular_velocity.x << "," << msg.angular_velocity.y << "," << msg.angular_velocity.z << "," << msg.angular_acceleration.x << ","
+                        << msg.angular_acceleration.y << "," << msg.angular_acceleration.z << std::endl;
         }
     }
 

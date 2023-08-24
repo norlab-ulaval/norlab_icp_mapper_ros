@@ -133,17 +133,23 @@ public:
         meanResidualFile.close();
         inertiaFile.close();
 
-        std::ofstream finalTransformationFile;
-        finalTransformationFile.open(params->finalTransformationFileName, std::ios::app);
-        finalTransformationFile << firstIcpOdom.inverse() * lastIcpOdom << std::endl;
-        finalTransformationFile.close();
+        if(!params->finalTransformationFileName.empty())
+        {
+            std::ofstream finalTransformationFile;
+            finalTransformationFile.open(params->finalTransformationFileName, std::ios::app);
+            finalTransformationFile << firstIcpOdom.inverse() * lastIcpOdom << std::endl;
+            finalTransformationFile.close();
+        }
 
         PM::TransformationParameters finalMapPose = odomToMap.inverse();
         finalMapPose.topRightCorner<3, 1>() = odomToMap.inverse().topLeftCorner<3, 3>() * -lastIcpOdom.topRightCorner<3, 1>();
-        std::ofstream finalMapPoseFile;
-        finalMapPoseFile.open(params->finalMapPoseFileName);
-        finalMapPoseFile << finalMapPose << std::endl;
-        finalMapPoseFile.close();
+        if(!params->finalMapPoseFileName.empty())
+        {
+            std::ofstream finalMapPoseFile;
+            finalMapPoseFile.open(params->finalMapPoseFileName);
+            finalMapPoseFile << finalMapPose << std::endl;
+            finalMapPoseFile.close();
+        }
     }
 
 private:

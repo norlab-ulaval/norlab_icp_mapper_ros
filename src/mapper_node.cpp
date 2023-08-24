@@ -71,7 +71,7 @@ public:
         else
         {
             mapperShutdownThread = std::thread(&MapperNode::mapperShutdownLoop, this);
-            tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(this->get_clock(), tf2::Duration::max()));
+            tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(this->get_clock(), std::chrono::seconds(1000000)));
             messageQueueSize = 0;
             inertiaQueueSize = 0;
         }
@@ -258,12 +258,24 @@ private:
             std::string linearSpeedsX = "";
             std::string linearSpeedsY = "";
             std::string linearSpeedsZ = "";
+            std::string linearSpeedVariancesX = "";
+            std::string linearSpeedCovariancesXY = "";
+            std::string linearSpeedCovariancesXZ = "";
+            std::string linearSpeedVariancesY = "";
+            std::string linearSpeedCovariancesYZ = "";
+            std::string linearSpeedVariancesZ = "";
             std::string linearAccelerationsX = "";
             std::string linearAccelerationsY = "";
             std::string linearAccelerationsZ = "";
             std::string angularSpeedsX = "";
             std::string angularSpeedsY = "";
             std::string angularSpeedsZ = "";
+            std::string angularSpeedVariancesX = "";
+            std::string angularSpeedCovariancesXY = "";
+            std::string angularSpeedCovariancesXZ = "";
+            std::string angularSpeedVariancesY = "";
+            std::string angularSpeedCovariancesYZ = "";
+            std::string angularSpeedVariancesZ = "";
             std::string angularAccelerationsX = "";
             std::string angularAccelerationsY = "";
             std::string angularAccelerationsZ = "";
@@ -275,17 +287,28 @@ private:
                     linearSpeedsX += std::to_string(cloudInertiaMeasurements[i].linear_velocity.x) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                     linearSpeedsY += std::to_string(cloudInertiaMeasurements[i].linear_velocity.y) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                     linearSpeedsZ += std::to_string(cloudInertiaMeasurements[i].linear_velocity.z) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    linearSpeedVariancesX += std::to_string(cloudInertiaMeasurements[i].linear_velocity_covariance[0]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    linearSpeedCovariancesXY += std::to_string(cloudInertiaMeasurements[i].linear_velocity_covariance[1]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    linearSpeedCovariancesXZ += std::to_string(cloudInertiaMeasurements[i].linear_velocity_covariance[2]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    linearSpeedVariancesY += std::to_string(cloudInertiaMeasurements[i].linear_velocity_covariance[4]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    linearSpeedCovariancesYZ += std::to_string(cloudInertiaMeasurements[i].linear_velocity_covariance[5]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    linearSpeedVariancesZ += std::to_string(cloudInertiaMeasurements[i].linear_velocity_covariance[8]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                     linearAccelerationsX += std::to_string(cloudInertiaMeasurements[i].linear_acceleration.x) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                     linearAccelerationsY += std::to_string(cloudInertiaMeasurements[i].linear_acceleration.y) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                     linearAccelerationsZ += std::to_string(cloudInertiaMeasurements[i].linear_acceleration.z) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                     angularSpeedsX += std::to_string(cloudInertiaMeasurements[i].angular_velocity.x) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                     angularSpeedsY += std::to_string(cloudInertiaMeasurements[i].angular_velocity.y) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                     angularSpeedsZ += std::to_string(cloudInertiaMeasurements[i].angular_velocity.z) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    angularSpeedVariancesX += std::to_string(cloudInertiaMeasurements[i].angular_velocity_covariance[0]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    angularSpeedCovariancesXY += std::to_string(cloudInertiaMeasurements[i].angular_velocity_covariance[1]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    angularSpeedCovariancesXZ += std::to_string(cloudInertiaMeasurements[i].angular_velocity_covariance[2]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    angularSpeedVariancesY += std::to_string(cloudInertiaMeasurements[i].angular_velocity_covariance[4]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    angularSpeedCovariancesYZ += std::to_string(cloudInertiaMeasurements[i].angular_velocity_covariance[5]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    angularSpeedVariancesZ += std::to_string(cloudInertiaMeasurements[i].angular_velocity_covariance[8]) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                     angularAccelerationsX += std::to_string(cloudInertiaMeasurements[i].angular_acceleration.x) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                     angularAccelerationsY += std::to_string(cloudInertiaMeasurements[i].angular_acceleration.y) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                     angularAccelerationsZ += std::to_string(cloudInertiaMeasurements[i].angular_acceleration.z) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
-                    measureTimes +=
-                            std::to_string((rclcpp::Time(cloudInertiaMeasurements[i].header.stamp) - timeStamp).seconds()) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
+                    measureTimes += std::to_string((rclcpp::Time(cloudInertiaMeasurements[i].header.stamp) - timeStamp).seconds()) + (i + 1 < cloudInertiaMeasurements.size() ? "," : "");
                 }
             }
             else
@@ -293,12 +316,24 @@ private:
                 linearSpeedsX = "0";
                 linearSpeedsY = "0";
                 linearSpeedsZ = "0";
+                linearSpeedVariancesX = "1";
+                linearSpeedCovariancesXY = "0";
+                linearSpeedCovariancesXZ = "0";
+                linearSpeedVariancesY = "1";
+                linearSpeedCovariancesYZ = "0";
+                linearSpeedVariancesZ = "1";
                 linearAccelerationsX = "0";
                 linearAccelerationsY = "0";
                 linearAccelerationsZ = "0";
                 angularSpeedsX = "0";
                 angularSpeedsY = "0";
                 angularSpeedsZ = "0";
+                angularSpeedVariancesX = "1";
+                angularSpeedCovariancesXY = "0";
+                angularSpeedCovariancesXZ = "0";
+                angularSpeedVariancesY = "1";
+                angularSpeedCovariancesYZ = "0";
+                angularSpeedVariancesZ = "1";
                 angularAccelerationsX = "0";
                 angularAccelerationsY = "0";
                 angularAccelerationsZ = "0";
@@ -315,9 +350,11 @@ private:
 
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())),
-                                     linearSpeedsX, linearSpeedsY, linearSpeedsZ, linearAccelerationsX, linearAccelerationsY,
-                                     linearAccelerationsZ, angularSpeedsX, angularSpeedsY, angularSpeedsZ, angularAccelerationsX,
-                                     angularAccelerationsY, angularAccelerationsZ, measureTimes);
+                                     linearSpeedsX, linearSpeedsY, linearSpeedsZ, linearSpeedVariancesX, linearSpeedCovariancesXY, linearSpeedCovariancesXZ,
+                                     linearSpeedVariancesY, linearSpeedCovariancesYZ, linearSpeedVariancesZ, linearAccelerationsX, linearAccelerationsY, linearAccelerationsZ,
+                                     angularSpeedsX, angularSpeedsY, angularSpeedsZ, angularSpeedVariancesX, angularSpeedCovariancesXY, angularSpeedCovariancesXZ,
+                                     angularSpeedVariancesY, angularSpeedCovariancesYZ, angularSpeedVariancesZ, angularAccelerationsX, angularAccelerationsY, angularAccelerationsZ,
+                                     measureTimes);
                 sensorToMapAfterUpdate = mapper->getSensorPose();
 
                 PM::DataPoints inputInMapFrame = transformation->compute(input, sensorToMapAfterUpdate);
@@ -416,9 +453,11 @@ private:
             {
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())),
-                                     linearSpeedsX, linearSpeedsY, linearSpeedsZ, linearAccelerationsX, linearAccelerationsY,
-                                     linearAccelerationsZ, angularSpeedsX, angularSpeedsY, angularSpeedsZ, angularAccelerationsX,
-                                     angularAccelerationsY, angularAccelerationsZ, measureTimes);
+                                     linearSpeedsX, linearSpeedsY, linearSpeedsZ, linearSpeedVariancesX, linearSpeedCovariancesXY, linearSpeedCovariancesXZ,
+                                     linearSpeedVariancesY, linearSpeedCovariancesYZ, linearSpeedVariancesZ, linearAccelerationsX, linearAccelerationsY, linearAccelerationsZ,
+                                     angularSpeedsX, angularSpeedsY, angularSpeedsZ, angularSpeedVariancesX, angularSpeedCovariancesXY, angularSpeedCovariancesXZ,
+                                     angularSpeedVariancesY, angularSpeedCovariancesYZ, angularSpeedVariancesZ, angularAccelerationsX, angularAccelerationsY, angularAccelerationsZ,
+                                     measureTimes);
                 sensorToMapAfterUpdate = mapper->getSensorPose();
             }
 

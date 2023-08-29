@@ -26,6 +26,7 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<std::string>("mean_residual_file_name", "residual.csv");
     node.declare_parameter<std::string>("final_transformation_file_name", "final_transformation.txt");
     node.declare_parameter<std::string>("inertia_file_name", "inertia.csv");
+    node.declare_parameter<std::string>("scan_directory", "");
     node.declare_parameter<float>("map_update_overlap", 0.9);
     node.declare_parameter<float>("map_update_delay", 1);
     node.declare_parameter<float>("map_update_distance", 0.5);
@@ -78,6 +79,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
 	node.get_parameter("mean_residual_file_name", meanResidualFileName);
 	node.get_parameter("final_transformation_file_name", finalTransformationFileName);
 	node.get_parameter("inertia_file_name", inertiaFileName);
+    node.get_parameter("scan_directory", scanDirectory);
 	node.get_parameter("map_update_overlap", mapUpdateOverlap);
 	node.get_parameter("map_update_delay", mapUpdateDelay);
 	node.get_parameter("map_update_distance", mapUpdateDistance);
@@ -123,23 +125,6 @@ void NodeParameters::validateParameters()
 			throw std::runtime_error("Invalid initial map file: " + initialMapFileName);
 		}
 		ifs.close();
-	}
-	
-	if(!isOnline)
-	{
-		std::ofstream mapOfs(finalMapFileName.c_str(), std::ios_base::app);
-		if(!mapOfs.good())
-		{
-			throw std::runtime_error("Invalid final map file: " + finalMapFileName);
-		}
-		mapOfs.close();
-		
-		std::ofstream trajectoryOfs(finalTrajectoryFileName.c_str(), std::ios_base::app);
-		if(!trajectoryOfs.good())
-		{
-			throw std::runtime_error("Invalid final trajectory file: " + finalTrajectoryFileName);
-		}
-		trajectoryOfs.close();
 	}
 	
 	if(!icpConfig.empty())

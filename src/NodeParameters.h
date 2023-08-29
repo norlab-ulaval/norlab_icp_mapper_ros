@@ -33,6 +33,7 @@ public:
     std::string meanResidualFileName;
     std::string finalTransformationFileName;
     std::string inertiaFileName;
+    std::string scanDirectory;
     float mapUpdateOverlap;
     float mapUpdateDelay;
     float mapUpdateDistance;

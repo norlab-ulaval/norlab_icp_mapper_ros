@@ -85,6 +85,8 @@ public:
         filteredCloudPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("filtered_cloud", messageQueueSize);
         residualPublisher = this->create_publisher<std_msgs::msg::Float32>("residual", 1);
 
+        removeNanFilter = PM::get().DataPointsFilterRegistrar.create("RemoveNaNDataPointsFilter");
+
         pointCloudCallbackGroup = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
         rclcpp::SubscriptionOptions pointCloudSubscriptionOptions;
         pointCloudSubscriptionOptions.callback_group = pointCloudCallbackGroup;
@@ -150,6 +152,11 @@ public:
             finalMapPoseFile << finalMapPose << std::endl;
             finalMapPoseFile.close();
         }
+
+        if(!params->scanDirectory.empty())
+        {
+            lastScan.save(params->scanDirectory + "/registered_last_scan.vtk");
+        }
     }
 
 private:
@@ -167,6 +174,11 @@ private:
 
             initialMap = transformation->compute(initialMap, params->initialMapPose);
             mapper->setMap(initialMap, PM::TransformationParameters::Identity(euclideanDim + 1, euclideanDim + 1));
+
+            if(!params->scanDirectory.empty())
+            {
+                initialMap.save(params->scanDirectory + "/map.vtk");
+            }
         }
     }
 
@@ -197,8 +209,14 @@ private:
 
             if(idleTime > std::chrono::duration<float>(params->maxIdleTime))
             {
-                saveMap(params->finalMapFileName);
-                saveTrajectory(params->finalTrajectoryFileName);
+                if(!params->finalMapFileName.empty())
+                {
+                    saveMap(params->finalMapFileName);
+                }
+                if(!params->finalTrajectoryFileName.empty())
+                {
+                    saveTrajectory(params->finalTrajectoryFileName);
+                }
                 RCLCPP_INFO(this->get_logger(), "Shutting down ROS");
                 rclcpp::shutdown();
             }
@@ -349,6 +367,12 @@ private:
             PM::TransformationParameters sensorToOdom = findTransform(params->sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
             PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 
+            if(!params->scanDirectory.empty() && nbRegistrations == 0)
+            {
+                PM::DataPoints priorFirstScan = removeNanFilter->filter(transformation->compute(input, sensorToMapBeforeUpdate));
+                priorFirstScan.save(params->scanDirectory + "/prior_first_scan.vtk");
+            }
+
             PM::TransformationParameters sensorToMapAfterUpdate;
             if(params->computeResidual && cloudInertiaMeasurements.size() > 0 && nbRegistrations > 0)
             {
@@ -465,6 +489,16 @@ private:
                                      angularSpeedVariancesY, angularSpeedCovariancesYZ, angularSpeedVariancesZ, angularAccelerationsX, angularAccelerationsY, angularAccelerationsZ,
                                      measureTimes);
                 sensorToMapAfterUpdate = mapper->getSensorPose();
+            }
+
+            if(!params->scanDirectory.empty())
+            {
+                if(nbRegistrations == 0)
+                {
+                    PM::DataPoints registeredFirstScan = transformation->compute(input, sensorToMapAfterUpdate);
+                    registeredFirstScan.save(params->scanDirectory + "/registered_first_scan.vtk");
+                }
+                lastScan = transformation->compute(input, sensorToMapAfterUpdate);
             }
 
             sensor_msgs::msg::PointCloud2 filteredCloud = PointMatcher_ROS::pointMatcherCloudToRosMsg<T>(input, params->sensorFrame, timeStamp);
@@ -689,6 +723,8 @@ private:
     PM::ICP icp;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markerPublisher;
     size_t lastMarkersSize;
+    std::shared_ptr<PM::DataPointsFilter> removeNanFilter;
+    PM::DataPoints lastScan;
 
     int nbRegistrations = 0;
     PM::TransformationParameters firstIcpOdom;

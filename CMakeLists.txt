@@ -17,6 +17,7 @@ find_package(libpointmatcher_ros REQUIRED)
 find_package(libpointmatcher REQUIRED)
 find_package(norlab_icp_mapper REQUIRED)
 find_package(imu_odom REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 
 include_directories(
   ${norlab_icp_mapper_INCLUDE_DIRS}
@@ -36,6 +37,7 @@ ament_target_dependencies(mapper_node
   map_msgs
   visualization_msgs
   imu_odom
+  tf2_geometry_msgs
 )
 target_link_libraries(mapper_node
   ${norlab_icp_mapper_LIBRARIES}

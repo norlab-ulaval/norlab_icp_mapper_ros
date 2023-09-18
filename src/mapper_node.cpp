@@ -15,6 +15,7 @@
 #include <imu_odom/msg/inertia.hpp>
 #include <set>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 class MapperNode : public rclcpp::Node
 {
@@ -229,6 +230,15 @@ private:
     {
         geometry_msgs::msg::TransformStamped tf = tfBuffer->lookupTransform(targetFrame, sourceFrame, time, std::chrono::milliseconds(100));
         return PointMatcher_ROS::rosTfToPointMatcherTransformation<T>(tf, transformDimension);
+    }
+
+    geometry_msgs::msg::Vector3 computeAngularVelocity(const geometry_msgs::msg::Quaternion& q1, const geometry_msgs::msg::Quaternion& q2, const float& dt)
+    {
+        geometry_msgs::msg::Vector3 angularVelocity;
+        angularVelocity.x = (2 / dt) * (q1.w*q2.x - q1.x*q2.w - q1.y*q2.z + q1.z*q2.y);
+        angularVelocity.y = (2 / dt) * (q1.w*q2.y + q1.x*q2.z - q1.y*q2.w - q1.z*q2.x);
+        angularVelocity.z = (2 / dt) *  (q1.w*q2.z - q1.x*q2.y + q1.y*q2.x - q1.z*q2.w);
+        return angularVelocity;
     }
 
     void gotInput(norlab_icp_mapper::PM::DataPoints input, rclcpp::Time timeStamp)
@@ -519,6 +529,17 @@ private:
 
             trajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
             nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<T>(robotToMap, "map", params->robotFrame, timeStamp);
+            if(previousIcpOdom.header.stamp.sec != 0 || previousIcpOdom.header.stamp.nanosec != 0)
+            {
+                float dt = (rclcpp::Time(odomMsgOut.header.stamp) - rclcpp::Time(previousIcpOdom.header.stamp)).seconds();
+                geometry_msgs::msg::Vector3 angularVelocityInRobotFrame = computeAngularVelocity(previousIcpOdom.pose.pose.orientation, odomMsgOut.pose.pose.orientation, dt);
+                geometry_msgs::msg::Vector3 angularVelocityInMapFrame;
+                geometry_msgs::msg::TransformStamped robotToMapTf;
+                robotToMapTf.transform.rotation = odomMsgOut.pose.pose.orientation;
+                tf2::doTransform(angularVelocityInRobotFrame, angularVelocityInMapFrame, robotToMapTf);
+                odomMsgOut.twist.twist.angular = angularVelocityInMapFrame;
+            }
+            previousIcpOdom = odomMsgOut;
             odomPublisher->publish(odomMsgOut);
 
             idleTimeLock.lock();
@@ -729,6 +750,7 @@ private:
     int nbRegistrations = 0;
     PM::TransformationParameters firstIcpOdom;
     PM::TransformationParameters lastIcpOdom;
+    nav_msgs::msg::Odometry previousIcpOdom;
     std::thread mapPublisherThread;
     std::thread mapTfPublisherThread;
     std::thread mapperShutdownThread;

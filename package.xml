@@ -20,6 +20,7 @@
   <depend>tf2</depend>
   <depend>libpointmatcher_ros</depend>
   <depend>imu_odom</depend>
+  <depend>tf2_geometry_msgs</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

@@ -108,6 +108,7 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 	{
 		PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
+    norlab_icp_mapper::DiagnosticInformation info;
 
 		if(hasToSetRobotPose)
 		{
@@ -116,8 +117,7 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 			hasToSetRobotPose = false;
 		}
 		try
-		{
-			mapper->processInput(input, sensorToMapBeforeUpdate,
+		{ info = mapper->processInput(input, sensorToMapBeforeUpdate,
 								 std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
 		}
 		catch (const PM::ConvergenceError& convergenceError)
@@ -133,6 +133,7 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 				ROS_ERROR_STREAM("Unable to save: " << runtimeError.what());
 			}
 			throw;
+
 		}
 		const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
 
@@ -170,6 +171,8 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		idleTimeLock.lock();
 		lastTimeInputWasProcessed = std::chrono::steady_clock::now();
 		idleTimeLock.unlock();
+
+    ROS_INFO_STREAM("Success ratio: " << info.successfully_processed_frames << "/" << info.failed_frames << ".");
 	}
 	catch(const tf2::TransformException& ex)
 	{

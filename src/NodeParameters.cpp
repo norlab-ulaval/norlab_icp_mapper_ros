@@ -17,17 +17,10 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<std::string>("initial_robot_pose", "");
     node.declare_parameter<std::string>("final_map_file_name", "map.vtk");
     node.declare_parameter<std::string>("final_trajectory_file_name", "trajectory.vtk");
-    node.declare_parameter<std::string>("icp_config", "");
-    node.declare_parameter<std::string>("input_filters_config", "");
-    node.declare_parameter<std::string>("map_post_filters_config", "");
-    node.declare_parameter<std::string>("map_update_condition", "overlap");
-    node.declare_parameter<float>("map_update_overlap", 0.9);
-    node.declare_parameter<float>("map_update_delay", 1);
-    node.declare_parameter<float>("map_update_distance", 0.5);
+    node.declare_parameter<std::string>("config", "");
     node.declare_parameter<float>("map_publish_rate", 10);
     node.declare_parameter<float>("map_tf_publish_rate", 10);
     node.declare_parameter<float>("max_idle_time", 10);
-    node.declare_parameter<float>("min_dist_new_point", 0.03);
     node.declare_parameter<float>("sensor_max_range", 80);
     node.declare_parameter<float>("prior_dynamic", 0.6);
     node.declare_parameter<float>("threshold_dynamic", 0.9);
@@ -52,17 +45,10 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
 	node.get_parameter("initial_robot_pose", initialRobotPoseString);
 	node.get_parameter("final_map_file_name", finalMapFileName);
 	node.get_parameter("final_trajectory_file_name", finalTrajectoryFileName);
-	node.get_parameter("icp_config", icpConfig);
-	node.get_parameter("input_filters_config", inputFiltersConfig);
-	node.get_parameter("map_post_filters_config", mapPostFiltersConfig);
-	node.get_parameter("map_update_condition", mapUpdateCondition);
-	node.get_parameter("map_update_overlap", mapUpdateOverlap);
-	node.get_parameter("map_update_delay", mapUpdateDelay);
-	node.get_parameter("map_update_distance", mapUpdateDistance);
+	node.get_parameter("config", configFilePath);
 	node.get_parameter("map_publish_rate", mapPublishRate);
 	node.get_parameter("map_tf_publish_rate", mapTfPublishRate);
 	node.get_parameter("max_idle_time", maxIdleTime);
-	node.get_parameter("min_dist_new_point", minDistNewPoint);
 	node.get_parameter("sensor_max_range", sensorMaxRange);
 	node.get_parameter("prior_dynamic", priorDynamic);
 	node.get_parameter("threshold_dynamic", thresholdDynamic);
@@ -108,54 +94,14 @@ void NodeParameters::validateParameters() const
 		trajectoryOfs.close();
 	}
 
-	if(!icpConfig.empty())
+	if(!configFilePath.empty())
 	{
-		std::ifstream ifs(icpConfig.c_str());
+		std::ifstream ifs(configFilePath.c_str());
 		if(!ifs.good())
 		{
-			throw std::runtime_error("Invalid icp config file: " + icpConfig);
+			throw std::runtime_error("Invalid config file: " + configFilePath);
 		}
 		ifs.close();
-	}
-
-	if(!inputFiltersConfig.empty())
-	{
-		std::ifstream ifs(inputFiltersConfig.c_str());
-		if(!ifs.good())
-		{
-			throw std::runtime_error("Invalid input filters config file: " + inputFiltersConfig);
-		}
-		ifs.close();
-	}
-
-	if(!mapPostFiltersConfig.empty())
-	{
-		std::ifstream ifs(mapPostFiltersConfig.c_str());
-		if(!ifs.good())
-		{
-			throw std::runtime_error("Invalid map post filters config file: " + mapPostFiltersConfig);
-		}
-		ifs.close();
-	}
-
-	if(mapUpdateCondition != "overlap" && mapUpdateCondition != "delay" && mapUpdateCondition != "distance")
-	{
-		throw std::runtime_error("Invalid map update condition: " + mapUpdateCondition);
-	}
-
-	if(mapUpdateOverlap < 0 || mapUpdateOverlap > 1)
-	{
-		throw std::runtime_error("Invalid map update overlap: " + std::to_string(mapUpdateOverlap));
-	}
-
-	if(mapUpdateDelay < 0)
-	{
-		throw std::runtime_error("Invalid map update delay: " + std::to_string(mapUpdateDelay));
-	}
-
-	if(mapUpdateDistance < 0)
-	{
-		throw std::runtime_error("Invalid map update distance: " + std::to_string(mapUpdateDistance));
 	}
 
 	if(mapPublishRate <= 0)
@@ -176,11 +122,6 @@ void NodeParameters::validateParameters() const
 		{
 			throw std::runtime_error("Invalid max idle time: " + std::to_string(maxIdleTime));
 		}
-	}
-
-	if(minDistNewPoint < 0)
-	{
-		throw std::runtime_error("Invalid minimum distance of new point: " + std::to_string(minDistNewPoint));
 	}
 
 	if(sensorMaxRange < 0)

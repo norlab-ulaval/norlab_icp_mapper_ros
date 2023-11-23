@@ -14,6 +14,7 @@ find_package(tf2 REQUIRED)
 find_package(libpointmatcher_ros REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(libpointmatcher REQUIRED)
+find_package(yaml-cpp REQUIRED)
 find_package(norlab_icp_mapper REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -25,6 +26,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
 include_directories(
     ${norlab_icp_mapper_INCLUDE_DIRS}
+    ${YAML_CPP_INCLUDE_DIR}
 )
 
 add_executable(mapper_node src/mapper_node.cpp src/NodeParameters.cpp)
@@ -41,7 +43,15 @@ ament_target_dependencies(mapper_node
 )
 target_link_libraries(mapper_node
     ${norlab_icp_mapper_LIBRARIES}
+    ${YAML_CPP_LIBRARIES}
 )
+
+if (TARGET libnabo::nabo)
+  target_link_libraries(mapper_node libnabo::nabo)
+else()
+  include_directories(mapper_node PUBLIC ${libnabo_INCLUDE_DIRS})
+  target_link_libraries(mapper_node ${libnabo_LIBRARIES})
+endif()
 
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 target_link_libraries(mapper_node "${cpp_typesupport_target}")

@@ -1,0 +1,13 @@
+<launch>
+  <set_parameter name="use_sim_time" value="true" />
+
+    <node pkg="norlab_icp_mapper_ros" exec="mapper_node" name="mapper_node" output="screen">
+        <remap from="points_in" to="rslidar32_points_deskewed"/>
+        <param name="robot_frame" value="base_link"/>
+        <param name="odom_frame" value="odom"/>
+        <param name="icp_config" value="$(find-pkg-share warthog_mapping)/launch/config.yaml"/>
+        <param name="sensor_max_range" value="100.0"/>
+        <param name="compute_prob_dynamic" value="true"/>
+        <param name="map_tf_publish_rate" value="100.0"/>
+    </node>
+</launch>

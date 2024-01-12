@@ -247,7 +247,7 @@ private:
             PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
             PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 
-            robotTrajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
+            robotTrajectory->addPose(robotToMap, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
             nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, "map", params->robotFrame, timeStamp);
 
             if(previousTimeStamp.nanoseconds() != 0)
@@ -357,7 +357,7 @@ private:
     		loadMap(req->map_file_name.data);
             int homogeneousDim = params->is3D ? 4 : 3;
             setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(req->pose, homogeneousDim));
-    		robotTrajectory->clearPoints();
+    		robotTrajectory->clear();
     	}
     	catch(const std::runtime_error& e)
     	{

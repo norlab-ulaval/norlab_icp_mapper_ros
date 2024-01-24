@@ -15,7 +15,6 @@ find_package(libpointmatcher_ros REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(libpointmatcher REQUIRED)
 find_package(norlab_icp_mapper REQUIRED)
-find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/SaveTrajectory.srv"

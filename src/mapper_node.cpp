@@ -144,7 +144,7 @@ void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const
 		PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
 		PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 
-		robotTrajectory->addPoint(robotToMap.topRightCorner(input.getEuclideanDim(), 1));
+		robotTrajectory->addPose(robotToMap, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.toNSec())));
 		nav_msgs::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, "map", params->robotFrame, timeStamp);
 
 		if(!previousTimeStamp.isZero())
@@ -234,7 +234,7 @@ bool loadMapCallback(norlab_icp_mapper_ros::LoadMap::Request& req, norlab_icp_ma
 	{
 		loadMap(req.map_file_name.data);
 		setRobotPose(rosMsgToPointMatcherPose(req.pose));
-		robotTrajectory->clearPoints();
+		robotTrajectory->clear();
 		return true;
 	}
 	catch(const std::runtime_error& e)

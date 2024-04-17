@@ -12,11 +12,12 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <fstream>
 
 class MapperNode : public rclcpp::Node
 {
 public:
-    MapperNode() :
+    MapperNode():
             Node("mapper_node")
     {
         params = std::unique_ptr<NodeParameters>(new NodeParameters(*this));
@@ -31,6 +32,7 @@ public:
                                                                                           params->beamHalfAngle, params->epsilonA, params->epsilonD, params->alpha,
                                                                                           params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
                                                                                           params->isMapping, params->saveMapCellsOnHardDrive));
+        nbRegistrations = 0;
 
         if(!params->initialMapFileName.empty())
         {
@@ -73,8 +75,8 @@ public:
             robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
             odomToMap = PM::Matrix::Identity(3, 3);
             laserScanSubscription = this->create_subscription<sensor_msgs::msg::LaserScan>("points_in", messageQueueSize,
-                                                                                               std::bind(&MapperNode::laserScanCallback, this,
-                                                                                                         std::placeholders::_1));
+                                                                                           std::bind(&MapperNode::laserScanCallback, this,
+                                                                                                     std::placeholders::_1));
         }
 
         reloadYamlConfigService = this->create_service<std_srvs::srv::Empty>("reload_yaml_config",
@@ -124,6 +126,9 @@ private:
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
+    int nbRegistrations;
+    PM::TransformationParameters firstRobotToMap;
+    PM::TransformationParameters lastRobotToMap;
     PM::TransformationParameters previousRobotToMap;
     rclcpp::Time previousTimeStamp;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reloadYamlConfigService;
@@ -139,7 +144,7 @@ private:
     {
         std::string::size_type const extensionPosition(filePath.find_last_of('.'));
         std::string mapPathWithoutExtension = filePath.substr(0, extensionPosition);
-        std::string extension = filePath.substr(extensionPosition, filePath.length()-1);
+        std::string extension = filePath.substr(extensionPosition, filePath.length() - 1);
 
         return mapPathWithoutExtension + suffix + extension;
     }
@@ -174,6 +179,15 @@ private:
         robotTrajectory->save(trajectoryFileName);
     }
 
+    void saveTransformation(const std::string& transformationFileName)
+    {
+        RCLCPP_INFO(this->get_logger(), "Saving transformation to %s", transformationFileName.c_str());
+        std::ofstream finalTransformationFile;
+        finalTransformationFile.open(transformationFileName, std::ios::app);
+        finalTransformationFile << firstRobotToMap.inverse() * lastRobotToMap << std::endl;
+        finalTransformationFile.close();
+    }
+
     void mapperShutdownLoop()
     {
         std::chrono::duration<float> idleTime = std::chrono::duration<float>::zero();
@@ -189,8 +203,18 @@ private:
 
             if(idleTime > std::chrono::duration<float>(params->maxIdleTime))
             {
-                saveMap(params->finalMapFileName);
-                saveTrajectory(params->finalTrajectoryFileName);
+                if(!params->finalMapFileName.empty())
+                {
+                    saveMap(params->finalMapFileName);
+                }
+                if(!params->finalTrajectoryFileName.empty())
+                {
+                    saveTrajectory(params->finalTrajectoryFileName);
+                }
+                if(!params->finalTransformationFileName.empty())
+                {
+                    saveTransformation(params->finalTransformationFileName);
+                }
                 RCLCPP_INFO(this->get_logger(), "Shutting down ROS");
                 rclcpp::shutdown();
             }
@@ -223,13 +247,23 @@ private:
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
             }
-            catch (const PM::ConvergenceError& convergenceError)
+            catch(const PM::ConvergenceError& convergenceError)
             {
                 RCLCPP_ERROR(this->get_logger(), "Unable to process input: %s", convergenceError.what());
                 try
                 {
-                    saveTrajectory(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error"));
-                    saveMap(appendToFilePath(params->finalMapFileName, "_convergence_error"));
+                    if(!params->finalTrajectoryFileName.empty())
+                    {
+                        saveTrajectory(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error"));
+                    }
+                    if(!params->finalMapFileName.empty())
+                    {
+                        saveMap(appendToFilePath(params->finalMapFileName, "_convergence_error"));
+                    }
+                    if(!params->finalTransformationFileName.empty())
+                    {
+                        saveTransformation(appendToFilePath(params->finalTransformationFileName, "_convergence_error"));
+                    }
                 }
                 catch(const std::runtime_error& runtimeError)
                 {
@@ -247,13 +281,19 @@ private:
             PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
             PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 
+            if((++nbRegistrations) == 6)
+            {
+                firstRobotToMap = robotToMap;
+            }
+            lastRobotToMap = robotToMap;
+
             robotTrajectory->addPose(robotToMap, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
             nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, "map", params->robotFrame, timeStamp);
 
             if(previousTimeStamp.nanoseconds() != 0)
             {
                 Eigen::Vector3f linearDisplacement = robotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
-                float deltaTime = (float) (timeStamp - previousTimeStamp).seconds();
+                float deltaTime = (float)(timeStamp - previousTimeStamp).seconds();
                 Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
                 odomMsgOut.twist.twist.linear.x = linearVelocity(0);
                 odomMsgOut.twist.twist.linear.y = linearVelocity(1);
@@ -266,7 +306,8 @@ private:
 
             if(!params->publishTfsBetweenRegistrations)
             {
-                geometry_msgs::msg::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map", params->odomFrame, timeStamp);
+                geometry_msgs::msg::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map", params->odomFrame,
+                                                                                                                                     timeStamp);
                 tfBroadcaster->sendTransform(currentOdomToMapTf);
             }
 
@@ -322,10 +363,12 @@ private:
             auto currTime = this->get_clock()->now();
 
             geometry_msgs::msg::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map",
-                                                                                                                            params->odomFrame,
-                                                                                                                            currTime);
-            if (lastTime != currTime)
+                                                                                                                                 params->odomFrame,
+                                                                                                                                 currTime);
+            if(lastTime != currTime)
+            {
                 tfBroadcaster->sendTransform(currentOdomToMapTf);
+            }
 
             lastTime = currTime;
             publishRate.sleep();
@@ -334,59 +377,60 @@ private:
 
     void reloadYamlConfigCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
-    	RCLCPP_INFO(this->get_logger(), "Reloading YAML config");
-    	mapper->loadYamlConfig(params->inputFiltersConfig, params->icpConfig, params->mapPostFiltersConfig);
+        RCLCPP_INFO(this->get_logger(), "Reloading YAML config");
+        mapper->loadYamlConfig(params->inputFiltersConfig, params->icpConfig, params->mapPostFiltersConfig);
     }
 
     void saveMapCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Response> res)
     {
-    	try
-    	{
-    		saveMap(req->map_file_name.data);
-    	}
-    	catch(const std::runtime_error& e)
-    	{
-    		RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", e.what());
-    	}
+        try
+        {
+            saveMap(req->map_file_name.data);
+        }
+        catch(const std::runtime_error& e)
+        {
+            RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", e.what());
+        }
     }
 
     void loadMapCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::LoadMap::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::LoadMap::Response> res)
     {
-    	try
-    	{
-    		loadMap(req->map_file_name.data);
+        try
+        {
+            loadMap(req->map_file_name.data);
             int homogeneousDim = params->is3D ? 4 : 3;
             setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(req->pose, homogeneousDim));
-    		robotTrajectory->clear();
-    	}
-    	catch(const std::runtime_error& e)
-    	{
-    		RCLCPP_ERROR(this->get_logger(), "Unable to load: %s", e.what());
-    	}
+            robotTrajectory->clear();
+        }
+        catch(const std::runtime_error& e)
+        {
+            RCLCPP_ERROR(this->get_logger(), "Unable to load: %s", e.what());
+        }
     }
 
-    void saveTrajectoryCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::SaveTrajectory::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::SaveTrajectory::Response> res)
+    void saveTrajectoryCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::SaveTrajectory::Request> req,
+                                std::shared_ptr<norlab_icp_mapper_ros::srv::SaveTrajectory::Response> res)
     {
-    	try
-    	{
-    		saveTrajectory(req->trajectory_file_name.data);
-    	}
-    	catch(const std::runtime_error& e)
-    	{
-    		RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", e.what());
-    	}
+        try
+        {
+            saveTrajectory(req->trajectory_file_name.data);
+        }
+        catch(const std::runtime_error& e)
+        {
+            RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", e.what());
+        }
     }
 
     void enableMappingCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
-    	RCLCPP_INFO(this->get_logger(), "Enabling mapping");
-    	mapper->setIsMapping(true);
+        RCLCPP_INFO(this->get_logger(), "Enabling mapping");
+        mapper->setIsMapping(true);
     }
 
     void disableMappingCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         RCLCPP_INFO(this->get_logger(), "Disabling mapping");
-    	mapper->setIsMapping(false);
+        mapper->setIsMapping(false);
     }
 };
 

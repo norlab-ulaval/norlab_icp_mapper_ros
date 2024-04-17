@@ -11,7 +11,6 @@ NodeParameters::NodeParameters(rclcpp::Node& node)
 
 void NodeParameters::declareParameters(rclcpp::Node& node)
 {
-    node.declare_parameter<std::string>("odom_frame", "odom");
     node.declare_parameter<std::string>("robot_frame", "base_link");
     node.declare_parameter<std::string>("initial_map_file_name", "");
     node.declare_parameter<std::string>("initial_robot_pose", "");
@@ -47,7 +46,6 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
 
 void NodeParameters::retrieveParameters(rclcpp::Node& node)
 {
-    node.get_parameter("odom_frame", odomFrame);
     node.get_parameter("robot_frame", robotFrame);
     node.get_parameter("initial_map_file_name", initialMapFileName);
     node.get_parameter("initial_robot_pose", initialRobotPoseString);

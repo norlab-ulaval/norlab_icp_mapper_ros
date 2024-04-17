@@ -65,7 +65,7 @@ public:
         if(params->is3D)
         {
             robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
-            odomToMap = PM::Matrix::Identity(4, 4);
+            robotToMap = PM::Matrix::Identity(4, 4);
             pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", messageQueueSize,
                                                                                                std::bind(&MapperNode::pointCloud2Callback, this,
                                                                                                          std::placeholders::_1));
@@ -73,7 +73,7 @@ public:
         else
         {
             robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
-            odomToMap = PM::Matrix::Identity(3, 3);
+            robotToMap = PM::Matrix::Identity(3, 3);
             laserScanSubscription = this->create_subscription<sensor_msgs::msg::LaserScan>("points_in", messageQueueSize,
                                                                                            std::bind(&MapperNode::laserScanCallback, this,
                                                                                                      std::placeholders::_1));
@@ -121,7 +121,7 @@ private:
     std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
     std::unique_ptr<Trajectory> robotTrajectory;
     std::mutex mapTfLock;
-    PM::TransformationParameters odomToMap;
+    PM::TransformationParameters robotToMap;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr mapPublisher;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
@@ -233,12 +233,11 @@ private:
     {
         try
         {
-            PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
-            PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
+            PM::TransformationParameters sensorToRobot = findTransform(sensorFrame, params->robotFrame, timeStamp, input.getHomogeneousDim());
+            PM::TransformationParameters sensorToMapBeforeUpdate = robotToMap * sensorToRobot;
 
             if(hasToSetRobotPose)
             {
-                PM::TransformationParameters sensorToRobot = findTransform(sensorFrame, params->robotFrame, timeStamp, input.getHomogeneousDim());
                 sensorToMapBeforeUpdate = robotPoseToSet * sensorToRobot;
                 hasToSetRobotPose = false;
             }
@@ -273,26 +272,23 @@ private:
             }
             const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
 
-            PM::TransformationParameters currentOdomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
+            PM::TransformationParameters currentRobotToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToRobot.inverse());
             mapTfLock.lock();
-            odomToMap = currentOdomToMap;
+            robotToMap = currentRobotToMap;
             mapTfLock.unlock();
-
-            PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
-            PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
 
             if((++nbRegistrations) == 6)
             {
-                firstRobotToMap = robotToMap;
+                firstRobotToMap = currentRobotToMap;
             }
-            lastRobotToMap = robotToMap;
+            lastRobotToMap = currentRobotToMap;
 
-            robotTrajectory->addPose(robotToMap, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
-            nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, "map", params->robotFrame, timeStamp);
+            robotTrajectory->addPose(currentRobotToMap, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
+            nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(currentRobotToMap, "map", params->robotFrame, timeStamp);
 
             if(previousTimeStamp.nanoseconds() != 0)
             {
-                Eigen::Vector3f linearDisplacement = robotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
+                Eigen::Vector3f linearDisplacement = currentRobotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
                 float deltaTime = (float)(timeStamp - previousTimeStamp).seconds();
                 Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
                 odomMsgOut.twist.twist.linear.x = linearVelocity(0);
@@ -300,15 +296,15 @@ private:
                 odomMsgOut.twist.twist.linear.z = linearVelocity(2);
             }
             previousTimeStamp = timeStamp;
-            previousRobotToMap = robotToMap;
+            previousRobotToMap = currentRobotToMap;
 
             odomPublisher->publish(odomMsgOut);
 
             if(!params->publishTfsBetweenRegistrations)
             {
-                geometry_msgs::msg::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map", params->odomFrame,
-                                                                                                                                     timeStamp);
-                tfBroadcaster->sendTransform(currentOdomToMapTf);
+                geometry_msgs::msg::TransformStamped currentRobotToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentRobotToMap, "map", params->robotFrame,
+                                                                                                                                      timeStamp);
+                tfBroadcaster->sendTransform(currentRobotToMapTf);
             }
 
             idleTimeLock.lock();
@@ -357,17 +353,17 @@ private:
         while(rclcpp::ok())
         {
             mapTfLock.lock();
-            PM::TransformationParameters currentOdomToMap = odomToMap;
+            PM::TransformationParameters currentRobotToMap = robotToMap;
             mapTfLock.unlock();
 
             auto currTime = this->get_clock()->now();
 
-            geometry_msgs::msg::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map",
-                                                                                                                                 params->odomFrame,
-                                                                                                                                 currTime);
+            geometry_msgs::msg::TransformStamped currentRobotToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentRobotToMap, "map",
+                                                                                                                                  params->robotFrame,
+                                                                                                                                  currTime);
             if(lastTime != currTime)
             {
-                tfBroadcaster->sendTransform(currentOdomToMapTf);
+                tfBroadcaster->sendTransform(currentRobotToMapTf);
             }
 
             lastTime = currTime;

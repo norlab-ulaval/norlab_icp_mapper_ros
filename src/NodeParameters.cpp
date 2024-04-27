@@ -37,11 +37,11 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<float>("alpha", 0.8);
     node.declare_parameter<float>("beta", 0.99);
     node.declare_parameter<bool>("is_3D", true);
-    node.declare_parameter<bool>("is_online", true);
     node.declare_parameter<bool>("compute_prob_dynamic", false);
     node.declare_parameter<bool>("is_mapping", true);
     node.declare_parameter<bool>("save_map_cells_on_hard_drive", true);
     node.declare_parameter<bool>("publish_tfs_between_registrations", true);
+    node.declare_parameter<std::string>("imu_to_lidar", "");
 }
 
 void NodeParameters::retrieveParameters(rclcpp::Node& node)
@@ -72,11 +72,11 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     node.get_parameter("alpha", alpha);
     node.get_parameter("beta", beta);
     node.get_parameter("is_3D", is3D);
-    node.get_parameter("is_online", isOnline);
     node.get_parameter("compute_prob_dynamic", computeProbDynamic);
     node.get_parameter("is_mapping", isMapping);
     node.get_parameter("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive);
     node.get_parameter("publish_tfs_between_registrations", publishTfsBetweenRegistrations);
+    node.get_parameter("imu_to_lidar", imuToLidarString);
 }
 
 void NodeParameters::validateParameters() const
@@ -91,29 +91,26 @@ void NodeParameters::validateParameters() const
         ifs.close();
     }
 
-    if(!isOnline)
+    std::ofstream mapOfs(finalMapFileName.c_str(), std::ios_base::app);
+    if(!finalMapFileName.empty() && !mapOfs.good())
     {
-        std::ofstream mapOfs(finalMapFileName.c_str(), std::ios_base::app);
-        if(!finalMapFileName.empty() && !mapOfs.good())
-        {
-            throw std::runtime_error("Invalid final map file: " + finalMapFileName);
-        }
-        mapOfs.close();
-
-        std::ofstream trajectoryOfs(finalTrajectoryFileName.c_str(), std::ios_base::app);
-        if(!finalTrajectoryFileName.empty() && !trajectoryOfs.good())
-        {
-            throw std::runtime_error("Invalid final trajectory file: " + finalTrajectoryFileName);
-        }
-        trajectoryOfs.close();
-
-        std::ofstream transformationOfs(finalTransformationFileName.c_str(), std::ios_base::app);
-        if(!finalTransformationFileName.empty() && !transformationOfs.good())
-        {
-            throw std::runtime_error("Invalid final transformation file: " + finalTransformationFileName);
-        }
-        transformationOfs.close();
+        throw std::runtime_error("Invalid final map file: " + finalMapFileName);
     }
+    mapOfs.close();
+
+    std::ofstream trajectoryOfs(finalTrajectoryFileName.c_str(), std::ios_base::app);
+    if(!finalTrajectoryFileName.empty() && !trajectoryOfs.good())
+    {
+        throw std::runtime_error("Invalid final trajectory file: " + finalTrajectoryFileName);
+    }
+    trajectoryOfs.close();
+
+    std::ofstream transformationOfs(finalTransformationFileName.c_str(), std::ios_base::app);
+    if(!finalTransformationFileName.empty() && !transformationOfs.good())
+    {
+        throw std::runtime_error("Invalid final transformation file: " + finalTransformationFileName);
+    }
+    transformationOfs.close();
 
     if(!icpConfig.empty())
     {
@@ -177,12 +174,10 @@ void NodeParameters::validateParameters() const
             throw std::runtime_error("Invalid map tf publish rate: " + std::to_string(mapTfPublishRate));
         }
     }
-    if(!isOnline)
+
+    if(maxIdleTime < 0)
     {
-        if(maxIdleTime < 0)
-        {
-            throw std::runtime_error("Invalid max idle time: " + std::to_string(maxIdleTime));
-        }
+        throw std::runtime_error("Invalid max idle time: " + std::to_string(maxIdleTime));
     }
 
     if(minDistNewPoint < 0)
@@ -239,6 +234,7 @@ void NodeParameters::validateParameters() const
 void NodeParameters::parseComplexParameters()
 {
     parseInitialRobotPose();
+    parseImuToLidar();
 }
 
 void NodeParameters::parseInitialRobotPose()
@@ -272,6 +268,41 @@ void NodeParameters::parseInitialRobotPose()
         for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
         {
             initialRobotPose(i / homogeneousDim, i % homogeneousDim) = poseMatrix[i];
+        }
+    }
+}
+
+void NodeParameters::parseImuToLidar()
+{
+    if(!imuToLidarString.empty())
+    {
+        int homogeneousDim = is3D ? 4 : 3;
+        imuToLidar = PM::TransformationParameters::Identity(homogeneousDim, homogeneousDim);
+
+        imuToLidarString.erase(std::remove(imuToLidarString.begin(), imuToLidarString.end(), '['), imuToLidarString.end());
+        imuToLidarString.erase(std::remove(imuToLidarString.begin(), imuToLidarString.end(), ']'), imuToLidarString.end());
+        std::replace(imuToLidarString.begin(), imuToLidarString.end(), ',', ' ');
+        std::replace(imuToLidarString.begin(), imuToLidarString.end(), ';', ' ');
+
+        float poseMatrix[homogeneousDim * homogeneousDim];
+        std::stringstream poseStringStream(imuToLidarString);
+        for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
+        {
+            if(!(poseStringStream >> poseMatrix[i]))
+            {
+                throw std::runtime_error("An error occurred while trying to parse the imu_to_lidar transform.");
+            }
+        }
+
+        float extraOutput = 0;
+        if((poseStringStream >> extraOutput))
+        {
+            throw std::runtime_error("Invalid imu_to_lidar transform dimension.");
+        }
+
+        for(int i = 0; i < homogeneousDim * homogeneousDim; i++)
+        {
+            imuToLidar(i / homogeneousDim, i % homogeneousDim) = poseMatrix[i];
         }
     }
 }

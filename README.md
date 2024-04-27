@@ -1,15 +1,28 @@
 # norlab_icp_mapper_ros
 A bridge between norlab_icp_mapper and ROS.
 
+## Dependencies
+This branch of norlab_icp_mapper_ros requires gtsam to function. In order to install this dependency, follow these steps:
+```bash
+cd ~/repos
+git clone git@github.com:borglab/gtsam.git
+cd gtsam
+mkdir build
+cd build
+cmake -DGTSAM_USE_SYSTEM_EIGEN=ON ..
+make -j 6
+sudo make install
+```
+
 ## Node Parameters
 |               Name                |                                                 Description                                                 |         Possible values          |                       Default Value                        |
-|:---------------------------------:|:-----------------------------------------------------------------------------------------------------------:| :------------------------------: |:----------------------------------------------------------:|
+|:---------------------------------:|:-----------------------------------------------------------------------------------------------------------:|:--------------------------------:|:----------------------------------------------------------:|
 |            robot_frame            |                                        Frame centered on the robot.                                         |            Any string            |                        "base_link"                         |
 |       initial_map_file_name       |                           Path of the file from which the initial map is loaded.                            |          Any file path           |                             ""                             |
 |        initial_robot_pose         | Transformation matrix in homogeneous coordinates describing the initial pose of the robot in the map frame. |  Any matrix of dimension 3 or 4  | "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]" |
-|        final_map_file_name        |                  Path of the file in which the final map is saved when is_online is false.                  |          Any file path           |                             ""                             |
-|    final_trajectory_file_name     |              Path of the file in which the final trajectory is saved when is_online is false.               |          Any file path           |                             ""                             |
-|  final_transformation_file_name   |            Path of the file in which the final transformation is saved when is_online is false.             |          Any file path           |                             ""                             |
+|        final_map_file_name        |                              Path of the file in which the final map is saved.                              |          Any file path           |                             ""                             |
+|    final_trajectory_file_name     |                          Path of the file in which the final trajectory is saved.                           |          Any file path           |                             ""                             |
+|  final_transformation_file_name   |                        Path of the file in which the final transformation is saved.                         |          Any file path           |                             ""                             |
 |            icp_config             |                         Path of the file containing the libpointmatcher icp config.                         |          Any file path           |                             ""                             |
 |       input_filters_config        |                    Path of the file containing the filters applied to the sensor points.                    |          Any file path           |                             ""                             |
 |      map_post_filters_config      |                Path of the file containing the filters applied to the map after the update.                 |          Any file path           |                             ""                             |
@@ -19,7 +32,7 @@ A bridge between norlab_icp_mapper and ROS.
 |        map_update_distance        |             Euclidean distance from last map update over which the map is updated (in meters).              |              [0, ∞)              |                            0.5                             |
 |         map_publish_rate          |      Rate at which the map is published (in Hertz). It can be slower depending on the map update rate.      |              (0, ∞)              |                            10.0                            |
 |        map_tf_publish_rate        |                              Rate at which the map tf is published (in Hertz).                              |              (0, ∞)              |                            10.0                            |
-|           max_idle_time           |           Delay to wait being idle before shutting down ROS when is_online is false (in seconds).           |              [0, ∞)              |                            10.0                            |
+|           max_idle_time           |                       Delay to wait being idle before shutting down ROS (in seconds).                       |              [0, ∞)              |                            10.0                            |
 |        min_dist_new_point         |        Distance from current map points under which a new point is not added to the map (in meters).        |              [0, ∞)              |                            0.03                            |
 |         sensor_max_range          |                             Maximum reading distance of the laser (in meters).                              |              [0, ∞)              |                            80.0                            |
 |           prior_dynamic           |                                A priori probability of points being dynamic.                                |              [0, 1]              |                            0.6                             |
@@ -30,11 +43,11 @@ A bridge between norlab_icp_mapper and ROS.
 |               alpha               |                       Probability of staying static given that the point was static.                        |              [0, 1]              |                            0.8                             |
 |               beta                |                      Probability of staying dynamic given that the point was dynamic.                       |              [0, 1]              |                            0.99                            |
 |               is_3D               |                       true when a 3D sensor is used, false when a 2D sensor is used.                        |          {true, false}           |                            true                            |
-|             is_online             |                            true when online mapping is wanted, false otherwise.                             |          {true, false}           |                            true                            |
 |       compute_prob_dynamic        |          true when computation of probability of points being dynamic is wanted, false otherwise.           |          {true, false}           |                           false                            |
 |            is_mapping             |                  true when map updates are wanted, false when only localization is wanted.                  |          {true, false}           |                            true                            |
 |   save_map_cells_on_hard_drive    |      true when map cell storage on hard drive is wanted, false when map cell storage in RAM is wanted.      |          {true, false}           |                            true                            |
 | publish_tfs_between_registrations |      When false, the map tf is published only after registration. Otherwise with map_tf_publish_rate.       |          {true, false}           |                            true                            |
+|           imu_to_lidar            |         Transformation matrix in homogeneous coordinates to convert from imu to lidar coordinates.          |    Any matrix of dimension 4     | "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]" |
 
 
 ## Node Topics

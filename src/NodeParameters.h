@@ -14,6 +14,7 @@ private:
     void validateParameters() const;
     void parseComplexParameters();
     void parseInitialRobotPose();
+    void parseImuToLidar();
 
 public:
     std::string robotFrame;
@@ -43,11 +44,12 @@ public:
     float alpha;
     float beta;
     bool is3D;
-    bool isOnline;
     bool computeProbDynamic;
     bool isMapping;
     bool saveMapCellsOnHardDrive;
     bool publishTfsBetweenRegistrations;
+    std::string imuToLidarString;
+    PM::TransformationParameters imuToLidar;
 
     NodeParameters(rclcpp::Node& node);
 };

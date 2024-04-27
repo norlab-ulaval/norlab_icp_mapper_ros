@@ -1,5 +1,9 @@
 #include "NodeParameters.h"
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/msg/laser_scan.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <norlab_icp_mapper/ImuMeasurement.h>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
 #include <norlab_icp_mapper/Trajectory.h>
 #include <norlab_icp_mapper_ros/srv/save_map.hpp>
@@ -30,9 +34,8 @@ public:
                                                                                           params->mapUpdateDistance, params->minDistNewPoint,
                                                                                           params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic,
                                                                                           params->beamHalfAngle, params->epsilonA, params->epsilonD, params->alpha,
-                                                                                          params->beta, params->is3D, params->isOnline, params->computeProbDynamic,
-                                                                                          params->isMapping, params->saveMapCellsOnHardDrive));
-        nbRegistrations = 0;
+                                                                                          params->beta, params->is3D, params->computeProbDynamic,
+                                                                                          params->isMapping, params->saveMapCellsOnHardDrive, params->imuToLidar));
 
         if(!params->initialMapFileName.empty())
         {
@@ -43,40 +46,40 @@ public:
             setRobotPose(params->initialRobotPose);
         }
 
-        int messageQueueSize;
-        if(params->isOnline)
-        {
-            tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(this->get_clock()));
-            messageQueueSize = 1;
-        }
-        else
-        {
-            mapperShutdownThread = std::thread(&MapperNode::mapperShutdownLoop, this);
-            tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(this->get_clock(), std::chrono::seconds(1000000)));
-            messageQueueSize = 0;
-        }
+        mapperShutdownThread = std::thread(&MapperNode::mapperShutdownLoop, this);
 
+        tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(this->get_clock(), std::chrono::seconds(1000000)));
         tfListener = std::unique_ptr<tf2_ros::TransformListener>(new tf2_ros::TransformListener(*tfBuffer));
         tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster(*this));
 
         mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", 2);
         odomPublisher = this->create_publisher<nav_msgs::msg::Odometry>("icp_odom", 50);
 
+        robotVelocity = Eigen::Matrix<float, 3, 1>::Zero();
+
+        imuCallbackGroup = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        rclcpp::SubscriptionOptions imuSubscriptionOptions;
+        imuSubscriptionOptions.callback_group = imuCallbackGroup;
+        imuSubscription = this->create_subscription<sensor_msgs::msg::Imu>("imu_in", 0, std::bind(&MapperNode::imuCallback, this, std::placeholders::_1), imuSubscriptionOptions);
+
+        pointCloudCallbackGroup = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        rclcpp::SubscriptionOptions pointCloudSubscriptionOptions;
+        pointCloudSubscriptionOptions.callback_group = pointCloudCallbackGroup;
         if(params->is3D)
         {
             robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
             robotToMap = PM::Matrix::Identity(4, 4);
-            pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", messageQueueSize,
-                                                                                               std::bind(&MapperNode::pointCloud2Callback, this,
-                                                                                                         std::placeholders::_1));
+            pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", 0,
+                                                                                               std::bind(&MapperNode::pointCloud2Callback, this, std::placeholders::_1),
+                                                                                               pointCloudSubscriptionOptions);
         }
         else
         {
             robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
             robotToMap = PM::Matrix::Identity(3, 3);
-            laserScanSubscription = this->create_subscription<sensor_msgs::msg::LaserScan>("points_in", messageQueueSize,
-                                                                                           std::bind(&MapperNode::laserScanCallback, this,
-                                                                                                     std::placeholders::_1));
+            laserScanSubscription = this->create_subscription<sensor_msgs::msg::LaserScan>("points_in", 0,
+                                                                                           std::bind(&MapperNode::laserScanCallback, this, std::placeholders::_1),
+                                                                                           pointCloudSubscriptionOptions);
         }
 
         reloadYamlConfigService = this->create_service<std_srvs::srv::Empty>("reload_yaml_config",
@@ -122,15 +125,18 @@ private:
     std::unique_ptr<Trajectory> robotTrajectory;
     std::mutex mapTfLock;
     PM::TransformationParameters robotToMap;
+    Eigen::Matrix<float, 3, 1> robotVelocity;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr mapPublisher;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
+    sensor_msgs::msg::PointCloud2 previousPointCloud2;
+    sensor_msgs::msg::LaserScan previousLaserScan;
+    rclcpp::CallbackGroup::SharedPtr imuCallbackGroup;
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imuSubscription;
+    rclcpp::CallbackGroup::SharedPtr pointCloudCallbackGroup;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
-    int nbRegistrations;
-    PM::TransformationParameters firstRobotToMap;
-    PM::TransformationParameters lastRobotToMap;
-    PM::TransformationParameters previousRobotToMap;
-    rclcpp::Time previousTimeStamp;
+    std::mutex imuMeasurementsLock;
+    std::list<sensor_msgs::msg::Imu> imuMeasurements;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reloadYamlConfigService;
     rclcpp::Service<norlab_icp_mapper_ros::srv::SaveMap>::SharedPtr saveMapService;
     rclcpp::Service<norlab_icp_mapper_ros::srv::LoadMap>::SharedPtr loadMapService;
@@ -184,7 +190,7 @@ private:
         RCLCPP_INFO(this->get_logger(), "Saving transformation to %s", transformationFileName.c_str());
         std::ofstream finalTransformationFile;
         finalTransformationFile.open(transformationFileName, std::ios::app);
-        finalTransformationFile << firstRobotToMap.inverse() * lastRobotToMap << std::endl;
+        finalTransformationFile << robotTrajectory->getPose(5).inverse() * robotTrajectory->getPose(robotTrajectory->getSize() - 1) << std::endl;
         finalTransformationFile.close();
     }
 
@@ -223,28 +229,65 @@ private:
         }
     }
 
+    void imuCallback(const sensor_msgs::msg::Imu& msg)
+    {
+        imuMeasurementsLock.lock();
+        imuMeasurements.emplace_back(msg);
+        imuMeasurementsLock.unlock();
+    }
+
     PM::TransformationParameters findTransform(const std::string& sourceFrame, const std::string& targetFrame, const rclcpp::Time& time, const int& transformDimension)
     {
         geometry_msgs::msg::TransformStamped tf = tfBuffer->lookupTransform(targetFrame, sourceFrame, time, std::chrono::milliseconds(100));
         return PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(tf, transformDimension);
     }
 
-    void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStampAtStartOfScan, const rclcpp::Time& timeStampAtEndOfScan)
     {
         try
         {
-            PM::TransformationParameters sensorToRobot = findTransform(sensorFrame, params->robotFrame, timeStamp, input.getHomogeneousDim());
-            PM::TransformationParameters sensorToMapBeforeUpdate = robotToMap * sensorToRobot;
+            imuMeasurementsLock.lock();
+            rclcpp::Time latestImuMeasurementTime = imuMeasurements.back().header.stamp;
+            imuMeasurementsLock.unlock();
+            while(rclcpp::ok() && latestImuMeasurementTime < timeStampAtEndOfScan)
+            {
+                this->get_clock()->sleep_for(rclcpp::Duration(std::chrono::milliseconds(10)));
+                imuMeasurementsLock.lock();
+                latestImuMeasurementTime = imuMeasurements.back().header.stamp;
+                imuMeasurementsLock.unlock();
+            }
 
+            std::vector<ImuMeasurement> cloudImuMeasurements; // contains the IMU measurements ranging from just before this cloud to just before the next
+            imuMeasurementsLock.lock();
+            while(imuMeasurements.size() >= 2 && rclcpp::Time((++imuMeasurements.begin())->header.stamp) <= timeStampAtStartOfScan)
+            {
+                imuMeasurements.pop_front();
+            }
+            for(auto it = imuMeasurements.begin(); it != imuMeasurements.end(); it++)
+            {
+                if(rclcpp::Time(it->header.stamp) < timeStampAtEndOfScan)
+                {
+                    cloudImuMeasurements.push_back({std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(rclcpp::Time(it->header.stamp).nanoseconds())),
+                                                    Eigen::Matrix<float, 3, 1>(it->angular_velocity.x, it->angular_velocity.y, it->angular_velocity.z),
+                                                    Eigen::Matrix<float, 3, 1>(it->linear_acceleration.x, it->linear_acceleration.y, it->linear_acceleration.z)});
+                }
+            }
+            imuMeasurementsLock.unlock();
+
+            PM::TransformationParameters robotToMapAtStartOfScan = robotToMap;
+            PM::TransformationParameters sensorToRobot = findTransform(sensorFrame, params->robotFrame, timeStampAtStartOfScan, input.getHomogeneousDim());
+            PM::TransformationParameters sensorToMapAtStartOfScan = robotToMapAtStartOfScan * sensorToRobot;
             if(hasToSetRobotPose)
             {
-                sensorToMapBeforeUpdate = robotPoseToSet * sensorToRobot;
+                sensorToMapAtStartOfScan = robotPoseToSet * sensorToRobot;
                 hasToSetRobotPose = false;
             }
+
             try
             {
-                mapper->processInput(input, sensorToMapBeforeUpdate,
-                                     std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
+                mapper->processInput(input, sensorToMapAtStartOfScan, robotVelocity, cloudImuMeasurements,
+                                     std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStampAtStartOfScan.nanoseconds())),
+                                     std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStampAtEndOfScan.nanoseconds())));
             }
             catch(const PM::ConvergenceError& convergenceError)
             {
@@ -270,40 +313,37 @@ private:
                 }
                 throw;
             }
-            const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
+            const PM::TransformationParameters& sensorToMapAtEndOfScan = mapper->getPose();
+            robotVelocity = mapper->getVelocity();
 
-            PM::TransformationParameters currentRobotToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToRobot.inverse());
+            PM::TransformationParameters robotToMapAtEndOfScan = transformation->correctParameters(sensorToMapAtEndOfScan * sensorToRobot.inverse());
             mapTfLock.lock();
-            robotToMap = currentRobotToMap;
+            robotToMap = robotToMapAtEndOfScan;
             mapTfLock.unlock();
 
-            if((++nbRegistrations) == 6)
+            if(robotTrajectory->getSize() == 0)
             {
-                firstRobotToMap = currentRobotToMap;
+                robotTrajectory->addPose(robotToMapAtStartOfScan,
+                                         std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStampAtStartOfScan.nanoseconds())));
             }
-            lastRobotToMap = currentRobotToMap;
+            robotTrajectory->addPose(robotToMapAtEndOfScan, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStampAtEndOfScan.nanoseconds())));
 
-            robotTrajectory->addPose(currentRobotToMap, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
-            nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(currentRobotToMap, "map", params->robotFrame, timeStamp);
-
-            if(previousTimeStamp.nanoseconds() != 0)
-            {
-                Eigen::Vector3f linearDisplacement = currentRobotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
-                float deltaTime = (float)(timeStamp - previousTimeStamp).seconds();
-                Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
-                odomMsgOut.twist.twist.linear.x = linearVelocity(0);
-                odomMsgOut.twist.twist.linear.y = linearVelocity(1);
-                odomMsgOut.twist.twist.linear.z = linearVelocity(2);
-            }
-            previousTimeStamp = timeStamp;
-            previousRobotToMap = currentRobotToMap;
-
+            nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMapAtEndOfScan, "map", params->robotFrame,
+                                                                                                              timeStampAtEndOfScan);
+            Eigen::Vector3f linearDisplacement = robotToMapAtEndOfScan.topRightCorner(input.getEuclideanDim(), 1) -
+                                                 robotToMapAtStartOfScan.topRightCorner(input.getEuclideanDim(), 1);
+            float deltaTime = (float)(timeStampAtEndOfScan - timeStampAtStartOfScan).seconds();
+            Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
+            odomMsgOut.twist.twist.linear.x = linearVelocity(0);
+            odomMsgOut.twist.twist.linear.y = linearVelocity(1);
+            odomMsgOut.twist.twist.linear.z = linearVelocity(2);
             odomPublisher->publish(odomMsgOut);
 
             if(!params->publishTfsBetweenRegistrations)
             {
-                geometry_msgs::msg::TransformStamped currentRobotToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentRobotToMap, "map", params->robotFrame,
-                                                                                                                                      timeStamp);
+                geometry_msgs::msg::TransformStamped currentRobotToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(robotToMapAtEndOfScan, "map",
+                                                                                                                                      params->robotFrame,
+                                                                                                                                      timeStampAtEndOfScan);
                 tfBroadcaster->sendTransform(currentRobotToMapTf);
             }
 
@@ -319,12 +359,22 @@ private:
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
     {
-        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+        if(previousPointCloud2.header.stamp.sec != 0 || previousPointCloud2.header.stamp.nanosec != 0)
+        {
+            gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(previousPointCloud2), previousPointCloud2.header.frame_id, previousPointCloud2.header.stamp,
+                     cloudMsgIn.header.stamp);
+        }
+        previousPointCloud2 = cloudMsgIn;
     }
 
     void laserScanCallback(const sensor_msgs::msg::LaserScan& scanMsgIn)
     {
-        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+        if(previousLaserScan.header.stamp.sec != 0 || previousLaserScan.header.stamp.nanosec != 0)
+        {
+            gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(previousLaserScan), previousLaserScan.header.frame_id, previousLaserScan.header.stamp,
+                     scanMsgIn.header.stamp);
+        }
+        previousLaserScan = scanMsgIn;
     }
 
     void mapPublisherLoop()
@@ -433,7 +483,10 @@ private:
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<MapperNode>());
+    rclcpp::Node::SharedPtr node = std::make_shared<MapperNode>();
+    rclcpp::executors::MultiThreadedExecutor executor;
+    executor.add_node(node);
+    executor.spin();
     rclcpp::shutdown();
     return 0;
 }

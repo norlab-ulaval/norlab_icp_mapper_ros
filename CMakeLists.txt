@@ -15,6 +15,8 @@ find_package(libpointmatcher_ros REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(libpointmatcher REQUIRED)
 find_package(norlab_icp_mapper REQUIRED)
+find_package(GTSAM REQUIRED)
+find_package(TBB REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/SaveTrajectory.srv"
@@ -41,6 +43,8 @@ ament_target_dependencies(mapper_node
 )
 target_link_libraries(mapper_node
     ${norlab_icp_mapper_LIBRARIES}
+    gtsam
+    TBB::tbb
 )
 
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
@@ -52,4 +56,3 @@ install(TARGETS mapper_node
 )
 
 ament_package()
-

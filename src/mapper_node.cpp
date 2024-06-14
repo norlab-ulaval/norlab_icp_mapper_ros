@@ -55,7 +55,8 @@ public:
         mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", 2);
         odomPublisher = this->create_publisher<nav_msgs::msg::Odometry>("icp_odom", 50);
 
-        robotVelocity = Eigen::Matrix<float, 3, 1>::Zero();
+        initialRobotPoseIsSet.store(false);
+        sensorVelocity = Eigen::Matrix<float, 3, 1>::Zero();
 
         imuCallbackGroup = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
         rclcpp::SubscriptionOptions imuSubscriptionOptions;
@@ -125,7 +126,8 @@ private:
     std::unique_ptr<Trajectory> robotTrajectory;
     std::mutex mapTfLock;
     PM::TransformationParameters robotToMap;
-    Eigen::Matrix<float, 3, 1> robotVelocity;
+    std::atomic_bool initialRobotPoseIsSet;
+    Eigen::Matrix<float, 3, 1> sensorVelocity;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr mapPublisher;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
     sensor_msgs::msg::PointCloud2 previousPointCloud2;
@@ -229,11 +231,9 @@ private:
         }
     }
 
-    void imuCallback(const sensor_msgs::msg::Imu& msg)
+    Eigen::Vector3f findOrthogonalVector(const Eigen::Vector3f& vector)
     {
-        imuMeasurementsLock.lock();
-        imuMeasurements.emplace_back(msg);
-        imuMeasurementsLock.unlock();
+        return Eigen::Vector3f(vector(1) + vector(2), vector(2) - vector(0), -vector(0) - vector(1));
     }
 
     PM::TransformationParameters findTransform(const std::string& sourceFrame, const std::string& targetFrame, const rclcpp::Time& time, const int& transformDimension)
@@ -242,8 +242,42 @@ private:
         return PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(tf, transformDimension);
     }
 
+    void imuCallback(const sensor_msgs::msg::Imu& msg)
+    {
+        try
+        {
+            if(!initialRobotPoseIsSet.load())
+            {
+                Eigen::Vector3f linearAcceleration(msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z);
+                Eigen::Matrix3f mapToImuOrientation;
+                mapToImuOrientation.col(2) = linearAcceleration.normalized();
+                mapToImuOrientation.col(1) = findOrthogonalVector(mapToImuOrientation.col(2)).normalized();
+                mapToImuOrientation.col(0) = mapToImuOrientation.col(1).cross(mapToImuOrientation.col(2)).normalized();
+                PM::TransformationParameters imuToRobot = findTransform(msg.header.frame_id, params->robotFrame, msg.header.stamp, 4);
+                mapTfLock.lock();
+                robotToMap = Eigen::Matrix4f::Identity();
+                robotToMap.topLeftCorner<3, 3>() = (imuToRobot.topLeftCorner<3, 3>() * mapToImuOrientation).inverse();
+                mapTfLock.unlock();
+                initialRobotPoseIsSet.store(true);
+            }
+
+            imuMeasurementsLock.lock();
+            imuMeasurements.emplace_back(msg);
+            imuMeasurementsLock.unlock();
+        }
+        catch(const tf2::TransformException& ex)
+        {
+            RCLCPP_WARN(this->get_logger(), "%s", ex.what());
+        }
+    }
+
     void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStampAtStartOfScan, const rclcpp::Time& timeStampAtEndOfScan)
     {
+        while(!initialRobotPoseIsSet.load())
+        {
+            std::this_thread::sleep_for(std::chrono::duration<float>(0.1));
+        }
+
         try
         {
             imuMeasurementsLock.lock();
@@ -285,7 +319,7 @@ private:
 
             try
             {
-                mapper->processInput(input, sensorToMapAtStartOfScan, robotVelocity, cloudImuMeasurements,
+                mapper->processInput(input, sensorToMapAtStartOfScan, sensorVelocity, cloudImuMeasurements,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStampAtStartOfScan.nanoseconds())),
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStampAtEndOfScan.nanoseconds())));
             }
@@ -314,7 +348,7 @@ private:
                 throw;
             }
             const PM::TransformationParameters& sensorToMapAtEndOfScan = mapper->getPose();
-            robotVelocity = mapper->getVelocity();
+            sensorVelocity = mapper->getVelocity();
 
             PM::TransformationParameters robotToMapAtEndOfScan = transformation->correctParameters(sensorToMapAtEndOfScan * sensorToRobot.inverse());
             mapTfLock.lock();

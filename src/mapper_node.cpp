@@ -308,6 +308,11 @@ private:
             }
             imuMeasurementsLock.unlock();
 
+            if(cloudImuMeasurements.size() == 0)
+            {
+                return;
+            }
+
             PM::TransformationParameters robotToMapAtStartOfScan = robotToMap;
             PM::TransformationParameters sensorToRobot = findTransform(sensorFrame, params->robotFrame, timeStampAtStartOfScan, input.getHomogeneousDim());
             PM::TransformationParameters sensorToMapAtStartOfScan = robotToMapAtStartOfScan * sensorToRobot;

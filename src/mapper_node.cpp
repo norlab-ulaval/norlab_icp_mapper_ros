@@ -121,7 +121,7 @@ private:
     std::unique_ptr<tf2_ros::Buffer> tfBuffer;
     std::unique_ptr<tf2_ros::TransformListener> tfListener;
     std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
-    std::vector<StampedState> lidarTrajectory;
+    std::vector<StampedState> imuTrajectory;
     std::mutex mapTfLock;
     PM::TransformationParameters robotToMap;
     std::atomic_bool initialRobotPoseIsSet;
@@ -179,10 +179,29 @@ private:
         hasToSetRobotPose = true;
     }
 
-    void appendToLidarTrajectory(const std::vector<StampedState>& intraScanTrajectory)
+    void appendToImuTrajectory(const std::vector<StampedState>& intraScanLidarTrajectory, const PM::TransformationParameters& imuToLidar,
+                               const std::vector<ImuMeasurement>& intraScanImuMeasurements)
     {
-        lidarTrajectory.reserve(lidarTrajectory.size() + std::distance(intraScanTrajectory.begin(), intraScanTrajectory.end()));
-        lidarTrajectory.insert(lidarTrajectory.end(), intraScanTrajectory.begin(), intraScanTrajectory.end());
+        for(unsigned int i = 0; i < intraScanLidarTrajectory.size(); ++i)
+        {
+            Eigen::Matrix<float, 4, 4> currentLidarPose = intraScanLidarTrajectory[i].pose;
+            Eigen::Matrix<float, 3, 1> currentLidarLinearVelocity = intraScanLidarTrajectory[i].velocity;
+            Eigen::Matrix<float, 4, 4> currentImuPose = currentLidarPose * imuToLidar;
+            ImuMeasurement currentImuMeasurement;
+            if(i < intraScanLidarTrajectory.size() - 1)
+            {
+                currentImuMeasurement = intraScanImuMeasurements[i];
+            }
+            else
+            {
+                currentImuMeasurement = intraScanImuMeasurements[intraScanImuMeasurements.size() - 1];
+            }
+            Eigen::Matrix<float, 3, 1> currentAngularVelocity = currentImuPose.topLeftCorner<3, 3>() * currentImuMeasurement.angularVelocity;
+            Eigen::Matrix<float, 3, 1> currentImuLeverArm = currentImuPose.topRightCorner<3, 1>() - currentLidarPose.topRightCorner<3, 1>();
+            Eigen::Matrix<float, 3, 1> currentImuLinearVelocity = currentLidarLinearVelocity + currentAngularVelocity.cross(currentImuLeverArm);
+
+            imuTrajectory.push_back({intraScanLidarTrajectory[i].timeStamp, currentImuPose, currentImuLinearVelocity});
+        }
     }
 
     void saveTrajectory(const std::string& trajectoryFileName)
@@ -190,7 +209,7 @@ private:
         RCLCPP_INFO(this->get_logger(), "Saving trajectory to %s", trajectoryFileName.c_str());
         std::ofstream trajectoryFile(trajectoryFileName);
         trajectoryFile << "timestamp,t00,t01,t02,t03,t10,t11,t12,t13,t20,t21,t22,t23,t30,t31,t32,t33,v0,v1,v2" << std::endl;
-        for(const StampedState& state: lidarTrajectory)
+        for(const StampedState& state: imuTrajectory)
         {
             trajectoryFile << state.timeStamp.time_since_epoch().count() << "," << state.pose(0, 0) << "," << state.pose(0, 1) << "," << state.pose(0, 2) << "," << state.pose(0, 3)
                            << "," << state.pose(1, 0) << "," << state.pose(1, 1) << "," << state.pose(1, 2) << "," << state.pose(1, 3)
@@ -351,14 +370,14 @@ private:
             }
             const PM::TransformationParameters& sensorToMapAtEndOfScan = mapper->getPose();
             sensorVelocity = mapper->getVelocity();
-            std::vector<StampedState> intraScanTrajectory = mapper->getIntraScanTrajectory();
+            std::vector<StampedState> intraScanLidarTrajectory = mapper->getIntraScanTrajectory();
 
             PM::TransformationParameters robotToMapAtEndOfScan = transformation->correctParameters(sensorToMapAtEndOfScan * sensorToRobot.inverse());
             mapTfLock.lock();
             robotToMap = robotToMapAtEndOfScan;
             mapTfLock.unlock();
 
-            appendToLidarTrajectory(intraScanTrajectory);
+            appendToImuTrajectory(intraScanLidarTrajectory, params->imuToLidar, cloudImuMeasurements);
 
             nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMapAtEndOfScan, "map", params->robotFrame,
                                                                                                               timeStampAtEndOfScan);
@@ -478,7 +497,7 @@ private:
             loadMap(req->map_file_name.data);
             int homogeneousDim = params->is3D ? 4 : 3;
             setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(req->pose, homogeneousDim));
-            lidarTrajectory.clear();
+            imuTrajectory.clear();
         }
         catch(const std::runtime_error& e)
         {

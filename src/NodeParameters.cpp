@@ -16,7 +16,6 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<std::string>("initial_robot_pose", "");
     node.declare_parameter<std::string>("final_map_file_name", "");
     node.declare_parameter<std::string>("final_trajectory_file_name", "");
-    node.declare_parameter<std::string>("final_transformation_file_name", "");
     node.declare_parameter<std::string>("icp_config", "");
     node.declare_parameter<std::string>("input_filters_config", "");
     node.declare_parameter<std::string>("map_post_filters_config", "");
@@ -51,7 +50,6 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     node.get_parameter("initial_robot_pose", initialRobotPoseString);
     node.get_parameter("final_map_file_name", finalMapFileName);
     node.get_parameter("final_trajectory_file_name", finalTrajectoryFileName);
-    node.get_parameter("final_transformation_file_name", finalTransformationFileName);
     node.get_parameter("icp_config", icpConfig);
     node.get_parameter("input_filters_config", inputFiltersConfig);
     node.get_parameter("map_post_filters_config", mapPostFiltersConfig);
@@ -104,13 +102,6 @@ void NodeParameters::validateParameters() const
         throw std::runtime_error("Invalid final trajectory file: " + finalTrajectoryFileName);
     }
     trajectoryOfs.close();
-
-    std::ofstream transformationOfs(finalTransformationFileName.c_str(), std::ios_base::app);
-    if(!finalTransformationFileName.empty() && !transformationOfs.good())
-    {
-        throw std::runtime_error("Invalid final transformation file: " + finalTransformationFileName);
-    }
-    transformationOfs.close();
 
     if(!icpConfig.empty())
     {

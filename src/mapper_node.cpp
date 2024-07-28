@@ -68,7 +68,6 @@ public:
         pointCloudSubscriptionOptions.callback_group = pointCloudCallbackGroup;
         if(params->is3D)
         {
-            robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
             robotToMap = PM::Matrix::Identity(4, 4);
             pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", 0,
                                                                                                std::bind(&MapperNode::pointCloud2Callback, this, std::placeholders::_1),
@@ -76,7 +75,6 @@ public:
         }
         else
         {
-            robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
             robotToMap = PM::Matrix::Identity(3, 3);
             laserScanSubscription = this->create_subscription<sensor_msgs::msg::LaserScan>("points_in", 0,
                                                                                            std::bind(&MapperNode::laserScanCallback, this, std::placeholders::_1),
@@ -123,7 +121,7 @@ private:
     std::unique_ptr<tf2_ros::Buffer> tfBuffer;
     std::unique_ptr<tf2_ros::TransformListener> tfListener;
     std::unique_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
-    std::unique_ptr<Trajectory> robotTrajectory;
+    std::vector<StampedState> lidarTrajectory;
     std::mutex mapTfLock;
     PM::TransformationParameters robotToMap;
     std::atomic_bool initialRobotPoseIsSet;
@@ -181,19 +179,26 @@ private:
         hasToSetRobotPose = true;
     }
 
+    void appendToLidarTrajectory(const std::vector<StampedState>& intraScanTrajectory)
+    {
+        lidarTrajectory.reserve(lidarTrajectory.size() + std::distance(intraScanTrajectory.begin(), intraScanTrajectory.end()));
+        lidarTrajectory.insert(lidarTrajectory.end(), intraScanTrajectory.begin(), intraScanTrajectory.end());
+    }
+
     void saveTrajectory(const std::string& trajectoryFileName)
     {
         RCLCPP_INFO(this->get_logger(), "Saving trajectory to %s", trajectoryFileName.c_str());
-        robotTrajectory->save(trajectoryFileName);
-    }
-
-    void saveTransformation(const std::string& transformationFileName)
-    {
-        RCLCPP_INFO(this->get_logger(), "Saving transformation to %s", transformationFileName.c_str());
-        std::ofstream finalTransformationFile;
-        finalTransformationFile.open(transformationFileName, std::ios::app);
-        finalTransformationFile << robotTrajectory->getPose(5).inverse() * robotTrajectory->getPose(robotTrajectory->getSize() - 1) << std::endl;
-        finalTransformationFile.close();
+        std::ofstream trajectoryFile(trajectoryFileName);
+        trajectoryFile << "timestamp,t00,t01,t02,t03,t10,t11,t12,t13,t20,t21,t22,t23,t30,t31,t32,t33,v0,v1,v2" << std::endl;
+        for(const StampedState& state: lidarTrajectory)
+        {
+            trajectoryFile << state.timeStamp.time_since_epoch().count() << "," << state.pose(0, 0) << "," << state.pose(0, 1) << "," << state.pose(0, 2) << "," << state.pose(0, 3)
+                           << "," << state.pose(1, 0) << "," << state.pose(1, 1) << "," << state.pose(1, 2) << "," << state.pose(1, 3)
+                           << "," << state.pose(2, 0) << "," << state.pose(2, 1) << "," << state.pose(2, 2) << "," << state.pose(2, 3)
+                           << "," << state.pose(3, 0) << "," << state.pose(3, 1) << "," << state.pose(3, 2) << "," << state.pose(3, 3)
+                           << "," << state.velocity(0) << "," << state.velocity(1) << "," << state.velocity(2) << std::endl;
+        }
+        trajectoryFile.close();
     }
 
     void mapperShutdownLoop()
@@ -218,10 +223,6 @@ private:
                 if(!params->finalTrajectoryFileName.empty())
                 {
                     saveTrajectory(params->finalTrajectoryFileName);
-                }
-                if(!params->finalTransformationFileName.empty())
-                {
-                    saveTransformation(params->finalTransformationFileName);
                 }
                 RCLCPP_INFO(this->get_logger(), "Shutting down ROS");
                 rclcpp::shutdown();
@@ -341,10 +342,6 @@ private:
                     {
                         saveMap(appendToFilePath(params->finalMapFileName, "_convergence_error"));
                     }
-                    if(!params->finalTransformationFileName.empty())
-                    {
-                        saveTransformation(appendToFilePath(params->finalTransformationFileName, "_convergence_error"));
-                    }
                 }
                 catch(const std::runtime_error& runtimeError)
                 {
@@ -354,18 +351,14 @@ private:
             }
             const PM::TransformationParameters& sensorToMapAtEndOfScan = mapper->getPose();
             sensorVelocity = mapper->getVelocity();
+            std::vector<StampedState> intraScanTrajectory = mapper->getIntraScanTrajectory();
 
             PM::TransformationParameters robotToMapAtEndOfScan = transformation->correctParameters(sensorToMapAtEndOfScan * sensorToRobot.inverse());
             mapTfLock.lock();
             robotToMap = robotToMapAtEndOfScan;
             mapTfLock.unlock();
 
-            if(robotTrajectory->getSize() == 0)
-            {
-                robotTrajectory->addPose(robotToMapAtStartOfScan,
-                                         std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStampAtStartOfScan.nanoseconds())));
-            }
-            robotTrajectory->addPose(robotToMapAtEndOfScan, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStampAtEndOfScan.nanoseconds())));
+            appendToLidarTrajectory(intraScanTrajectory);
 
             nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMapAtEndOfScan, "map", params->robotFrame,
                                                                                                               timeStampAtEndOfScan);
@@ -485,7 +478,7 @@ private:
             loadMap(req->map_file_name.data);
             int homogeneousDim = params->is3D ? 4 : 3;
             setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(req->pose, homogeneousDim));
-            robotTrajectory->clear();
+            lidarTrajectory.clear();
         }
         catch(const std::runtime_error& e)
         {

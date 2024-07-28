@@ -23,7 +23,6 @@ public:
     PM::TransformationParameters initialRobotPose;
     std::string finalMapFileName;
     std::string finalTrajectoryFileName;
-    std::string finalTransformationFileName;
     std::string icpConfig;
     std::string inputFiltersConfig;
     std::string mapPostFiltersConfig;

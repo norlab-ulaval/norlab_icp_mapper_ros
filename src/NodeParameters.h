@@ -32,6 +32,7 @@ public:
 	bool isOnline;
 	bool saveMapCellsOnHardDrive;
 	bool publishTfsBetweenRegistrations;
+	bool color3Dpoints;
 
 	NodeParameters(rclcpp::Node& node);
 };

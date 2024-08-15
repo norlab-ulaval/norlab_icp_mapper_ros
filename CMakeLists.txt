@@ -27,8 +27,8 @@ include_directories(
     ${norlab_icp_mapper_INCLUDE_DIRS}
 )
 
+#Mapper Node
 add_executable(mapper_node src/mapper_node.cpp src/NodeParameters.cpp)
-
 ament_target_dependencies(mapper_node
     rclcpp
     std_msgs
@@ -43,11 +43,30 @@ target_link_libraries(mapper_node
     ${norlab_icp_mapper_LIBRARIES}
 )
 
+#color Node
+add_executable(color_node src/color3DPoints.cpp src/NodeParameters.cpp)
+ament_target_dependencies(color_node
+    rclcpp
+    std_msgs
+    sensor_msgs
+    geometry_msgs
+    std_srvs
+    tf2_ros
+    tf2
+    libpointmatcher_ros
+)
+target_link_libraries(color_node
+    ${norlab_icp_mapper_LIBRARIES}
+)
+
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 target_link_libraries(mapper_node "${cpp_typesupport_target}")
+target_link_libraries(color_node "${cpp_typesupport_target}")
 ament_export_dependencies(rosidl_default_runtime)
 
-install(TARGETS mapper_node
+install(TARGETS 
+    mapper_node
+    color_node
     DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -26,6 +26,7 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<bool>("is_online", true);
     node.declare_parameter<bool>("save_map_cells_on_hard_drive", true);
     node.declare_parameter<bool>("publish_tfs_between_registrations", true);
+	node.declare_parameter<bool>("color3Dpoints", true);
 }
 
 void NodeParameters::retrieveParameters(rclcpp::Node& node)
@@ -45,6 +46,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
 	node.get_parameter("is_online", isOnline);
 	node.get_parameter("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive);
 	node.get_parameter("publish_tfs_between_registrations", publishTfsBetweenRegistrations);
+	node.get_parameter("color3Dpoints", color3Dpoints);
 }
 
 void NodeParameters::validateParameters() const

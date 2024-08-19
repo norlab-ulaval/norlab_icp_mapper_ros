@@ -54,13 +54,27 @@ public:
         mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", 2);
         odomPublisher = this->create_publisher<nav_msgs::msg::Odometry>("icp_odom", 50);
 
+
+
         if(params->is3D)
         {
             robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
             odomToMap = PM::Matrix::Identity(4, 4);
-            pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", messageQueueSize,
+            if(params->color3Dpoints)
+            {
+                RCLCPP_INFO(this->get_logger(), "Color3Dpoints enabled");
+                coloredpointsSubscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("colorlidarpoints", messageQueueSize,
+                                                                                               std::bind(&MapperNode::coloredpointsCallback, this,
+                                                                                                         std::placeholders::_1));
+            }
+            else
+            {
+                RCLCPP_INFO(this->get_logger(), "Color3Dpoints disabled");
+                pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", messageQueueSize,
                                                                                                std::bind(&MapperNode::pointCloud2Callback, this,
                                                                                                          std::placeholders::_1));
+            }
+
         }
         else
         {
@@ -117,6 +131,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr mapPublisher;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr coloredpointsSubscription;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
     PM::TransformationParameters previousRobotToMap;
     rclcpp::Time previousTimeStamp;
@@ -201,10 +216,13 @@ private:
 
     void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
     {
+        RCLCPP_INFO(this->get_logger(), "in function got_input");
+
         try
         {
             PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
             PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
+	        typedef typename PM::DataPoints::View View;
 
             if(hasToSetRobotPose)
             {
@@ -216,6 +234,34 @@ private:
             {
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
+
+                bool color_exists= input.descriptorExists("color");
+                RCLCPP_INFO(this->get_logger(), "Color exists: %d", color_exists);
+                //View view(input.getDescriptorViewByName("color"));
+
+
+                RCLCPP_INFO(this->get_logger(), "num_rows: %ld num_cols: %ld", input.features.rows(), input.features.cols());
+                // for(size_t y(0); y < input.height; ++y)
+			    // {
+                //     for(size_t x(0); x < input.width; ++x)
+                //     {
+                //         const uint32_t rgba = 0xff884422;
+                //         const T colorA(T((rgba >> 24) & 0xff) / 255.);
+                //         const T colorR(T((rgba >> 16) & 0xff) / 255.);
+                //         const T colorG(T((rgba >> 8) & 0xff) / 255.);
+                //         const T colorB(T((rgba >> 0) & 0xff) / 255.);
+                //         view(0, ptId) = colorR;
+                //         view(1, ptId) = colorG;
+                //         view(2, ptId) = colorB;
+                //         if(view.rows() > 3)
+                //         {
+                //             view(3, ptId) = colorA;
+                //         }
+                //         ptId += 1;
+                //     }
+			    // }
+                bool new_color_exists= input.descriptorExists("color");
+                RCLCPP_INFO(this->get_logger(), "new Color exists: %d", new_color_exists);
             }
             catch (const PM::ConvergenceError& convergenceError)
             {
@@ -272,6 +318,11 @@ private:
         {
             RCLCPP_WARN(this->get_logger(), "%s", ex.what());
         }
+    }
+
+    void coloredpointsCallback(const sensor_msgs::msg::PointCloud2& coloredcloudMsgIn)
+    {
+        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(coloredcloudMsgIn), coloredcloudMsgIn.header.frame_id, coloredcloudMsgIn.header.stamp);
     }
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)

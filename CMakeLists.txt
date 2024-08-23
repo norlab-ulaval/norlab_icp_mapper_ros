@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.8)
 project(norlab_icp_mapper_ros)
 
 set(CMAKE_BUILD_TYPE "Release")
+cmake_policy(SET CMP0074 NEW)
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -18,6 +19,8 @@ find_package(norlab_icp_mapper CONFIG 2.0.0 REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(PCL REQUIRED)
 find_package(pcl_conversions REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(OpenCV REQUIRED)
 
 
 
@@ -65,6 +68,8 @@ ament_target_dependencies(color_node
     PCL
     pcl_conversions
     libpointmatcher_ros
+    cv_bridge
+    OpenCV
 )
 target_link_libraries(color_node
     ${norlab_icp_mapper_LIBRARIES}

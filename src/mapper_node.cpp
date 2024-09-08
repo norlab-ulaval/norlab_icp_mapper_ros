@@ -35,7 +35,8 @@ public:
                                                                                           params->sensorMaxRange, params->priorDynamic, params->thresholdDynamic,
                                                                                           params->beamHalfAngle, params->epsilonA, params->epsilonD, params->alpha,
                                                                                           params->beta, params->is3D, params->computeProbDynamic,
-                                                                                          params->isMapping, params->saveMapCellsOnHardDrive, params->imuToLidar));
+                                                                                          params->isMapping, params->saveMapCellsOnHardDrive, params->imuToLidar,
+                                                                                          params->reconstructContinuousTrajectory));
 
         if(!params->initialMapFileName.empty())
         {

@@ -49,6 +49,7 @@ public:
     bool publishTfsBetweenRegistrations;
     std::string imuToLidarString;
     PM::TransformationParameters imuToLidar;
+    bool reconstructContinuousTrajectory;
 
     NodeParameters(rclcpp::Node& node);
 };

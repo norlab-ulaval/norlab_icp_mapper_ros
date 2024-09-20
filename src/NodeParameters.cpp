@@ -21,6 +21,7 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<float>("map_publish_rate", 10);
     node.declare_parameter<float>("map_tf_publish_rate", 10);
     node.declare_parameter<float>("max_idle_time", 10);
+	node.declare_parameter<float>("prob_radiation", 0.5);
     node.declare_parameter<bool>("is_3D", true);
     node.declare_parameter<bool>("is_mapping", true);
     node.declare_parameter<bool>("is_online", true);
@@ -41,6 +42,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
 	node.get_parameter("map_publish_rate", mapPublishRate);
 	node.get_parameter("map_tf_publish_rate", mapTfPublishRate);
 	node.get_parameter("max_idle_time", maxIdleTime);
+	node.get_parameter("prob_radiation", probRadiation);
 	node.get_parameter("is_3D", is3D);
 	node.get_parameter("is_mapping", isMapping);
 	node.get_parameter("is_online", isOnline);

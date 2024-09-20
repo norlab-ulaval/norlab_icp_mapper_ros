@@ -1,82 +1,19 @@
 #include "NodeParameters.h"
-#include <pointmatcher_ros/PointMatcher_ROS.h>
 #include "std_msgs/msg/string.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include <sensor_msgs/msg/point_cloud2.hpp>
-#include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
-#include <pcl/filters/extract_indices.h>
-#include <pcl/filters/voxel_grid.h>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
 #include <tf2_ros/transform_listener.h>
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "tf2_ros/buffer.h"
-#include <fstream>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
-
-class GetTransformVectors: public rclcpp::Node
-{
-public:
-    GetTransformVectors() : Node("GetTransformVectors")
-    {
-        tfBuffer = std::make_shared<tf2_ros::Buffer>(this->get_clock());
-        tfListener = std::make_shared<tf2_ros::TransformListener>(*tfBuffer);
-    }
-
-    GetTransformVectors(std::string& target_frame, std::string& source_frame, rclcpp::Time& time_stamp): Node("GetTransformVectors")
-    {
-
-        tfBuffer = std::make_shared<tf2_ros::Buffer>(this->get_clock());
-        tfListener = std::make_shared<tf2_ros::TransformListener>(*tfBuffer);
-        transform = getTransform(target_frame, source_frame, time_stamp);
-    }
-
-    geometry_msgs::msg::TransformStamped getTransform(std::string& target_frame, std::string& source_frame, rclcpp::Time& time_stamp)
-    {
-        try
-        {
-            transform = tfBuffer->lookupTransform(
-                "arm_camera_color_frame",  // Target frame
-                "lidar_link",   // Source frame
-                tf2::TimePointZero // Use the latest available transform
-            );
-        }
-        catch (tf2::TransformException &ex)
-        {
-            RCLCPP_ERROR(this->get_logger(), "Transform error: %s", ex.what());
-        }
-        return transform;
-    }
-
-    cv::Mat getTranslationVector()
-    {
-        cv::Mat translation_vector = (cv::Mat_<double>(3, 1) << transform.transform.translation.x, transform.transform.translation.y, transform.transform.translation.z);
-        return translation_vector;
-    }
-
-    cv::Mat getRotationVector()
-    {
-        cv::Mat rotation_vector = (cv::Mat_<double>(3, 1) << transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z);
-        return rotation_vector;
-    }
-
-    cv::Mat getRotationMatrix()
-    {
-        cv::Mat rotation_matrix;
-        cv::Rodrigues(getRotationVector(), rotation_matrix);
-        return rotation_matrix;
-    }
-
-private:
-    geometry_msgs::msg::TransformStamped transform;
-    std::shared_ptr<tf2_ros::Buffer> tfBuffer;
-    std::shared_ptr<tf2_ros::TransformListener> tfListener;
-};
-
+#include <vector>
+#include <algorithm>
 
 class color3DPointsNode : public rclcpp::Node
 {
@@ -97,18 +34,27 @@ class color3DPointsNode : public rclcpp::Node
         tfBuffer = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tfListener = std::make_shared<tf2_ros::TransformListener>(*tfBuffer);
 
+        params = std::make_unique<NodeParameters>(*this);
+
     }
 
 private:
-    void getTransform(std::string& target_frame, std::string& source_frame, rclcpp::Time& time_stamp)
+    bool getTransform(std::string& target_frame, std::string& source_frame, rclcpp::Time& time_stamp)
     {
+        if (target_frame.empty() || source_frame.empty())
+        {
+            RCLCPP_INFO(this->get_logger(), "Empty target or source frame; target_frame: %s source frame: %s", target_frame.c_str(), source_frame.c_str());
+            return false;
+        }
         try
         {
             transform = tfBuffer->lookupTransform(target_frame, source_frame, tf2::TimePointZero);
+            return true;
         }
         catch (tf2::TransformException &ex)
         {
             RCLCPP_ERROR(this->get_logger(), "Transform error: %s", ex.what());
+            return false;
         }
     }
 
@@ -137,39 +83,61 @@ private:
         cv::Rodrigues(getRotationVector(), rotation_matrix);
         return rotation_matrix;
     }
-    void saveVectorToCSV(const std::vector<cv::Point2f>& points, const std::string& filename) {
-        std::ofstream file(filename);
 
-        if (file.is_open())
-        {
-            for (const auto& point : points)
-            {
-                file << point.x << "," << point.y << "\n";
-            }
-            file.close();
-        }
-        else {
-            std::cerr << "Unable to open file for writing: " << filename << std::endl;
-        }
-    }
-
-    bool is_point_in_image(const cv::Point2f& point) {
+    bool is_point_in_image(const cv::Point2f& point)
+    {
         return point.x >= 0 && point.x < image_.cols && point.y >= 0 && point.y < image_.rows;
     }
 
+    bool is_valid_index(int index, std::vector<int> valid_indices)
+    {
+        return std::binary_search(valid_indices.begin(), valid_indices.end(), index);
+    }
 
     void cameraCallback(const sensor_msgs::msg::Image::SharedPtr camera_msg)
     {
         try {
 
-            // Use MONO8 encoding to convert the image to a grayscale image
             image_ = cv_bridge::toCvCopy(camera_msg, sensor_msgs::image_encodings::BGR8)->image;
             image_received = true;
             image_frameId  = camera_msg->header.frame_id;
         } catch (cv_bridge::Exception& e) {
             RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
+            image_received = false;
         }
+    }
 
+    pcl::PointCloud<pcl::PointXYZRGB> add_color_field(pcl::PointCloud<pcl::PointXYZ>& pcl_cloud)
+    {
+        pcl::PointCloud<pcl::PointXYZRGB> pcl_cloud_colored;
+        pcl_cloud_colored.header = pcl_cloud.header;
+
+        for (std::size_t i = 0; i < pcl_cloud.size(); ++i) {
+            pcl::PointXYZ point = pcl_cloud[i];
+            pcl::PointXYZRGB colored_point;
+            colored_point.x = point.x;
+            colored_point.y = point.y;
+            colored_point.z = point.z;
+            colored_point.r = 0;
+            colored_point.g = 0;
+            colored_point.b = 0;
+            //colored_point.intensity = 1.0f;
+            pcl_cloud_colored.points.push_back(colored_point);
+        }
+        return pcl_cloud_colored;
+    }
+
+    std::vector<int> get_valid_indices(const pcl::PointCloud<pcl::PointXYZ>& pcl_cloud)
+    {
+        std::vector<int> valid_indices;
+        for (std::size_t i = 0; i < pcl_cloud.size(); ++i) {
+            pcl::PointXYZ point = pcl_cloud[i];
+            if (point.x > 0)
+            {
+                valid_indices.push_back(i);
+            }
+        }
+        return valid_indices;
     }
 
     void colorlidarPointsCallback(const sensor_msgs::msg::PointCloud2::SharedPtr lidar_msg)
@@ -177,62 +145,45 @@ private:
 
         pcl::PointCloud<pcl::PointXYZ> pcl_cloud;
         pcl::fromROSMsg(*lidar_msg, pcl_cloud);
-        if (!image_received) {
-            RCLCPP_WARN(this->get_logger(), "No image received yet");
-            colorPointsPublisher->publish(*lidar_msg);
-            return;
-        }
+        pcl::PointCloud<pcl::PointXYZRGB> pcl_cloud_colored = add_color_field(pcl_cloud);
+        float prob_radiation = params->probRadiation;
+        float grey_value = 0.0;
+        cv::Vec3b color;
+
 
         lidar_frameId = lidar_msg->header.frame_id;
         time_stamp    = lidar_msg->header.stamp;
 
+        bool transform_status = getTransform(image_frameId, lidar_frameId, time_stamp);
+        sensor_msgs::msg::PointCloud2 output_msg;
 
-
-        // Create a new point cloud with color information
-        pcl::PointCloud<pcl::PointXYZRGB> pcl_cloud_colored;
-        pcl::PointCloud<pcl::PointXYZ> valid_pcl; //filtering only the points in front of the camera
-        pcl_cloud_colored.header = pcl_cloud.header;
-        valid_pcl.header = pcl_cloud.header;
-
-        // Add the color information to the point cloud. Make all points black
-        for (const auto& point : pcl_cloud.points) {
-            pcl::PointXYZRGB colored_point;
-            colored_point.x = point.x;
-            colored_point.y = point.y;
-            colored_point.z = point.z;
-
-            if (point.x >= 0)
-            {
-                valid_pcl.points.push_back(point);
-            }
-            // Correctly assign RGB values
-            uint8_t r = 255;
-            uint8_t g = 0;
-            uint8_t b = 0;
-            uint32_t rgb = (static_cast<uint32_t>(r) << 16 |
-                    static_cast<uint32_t>(g) << 8 |
-                    static_cast<uint32_t>(b));
-
-
-            colored_point.rgb = *reinterpret_cast<float*>(&rgb);
-
-            pcl_cloud_colored.points.push_back(colored_point);
+        if ((!transform_status) || (!image_received))
+        {
+            pcl::toROSMsg(pcl_cloud_colored, output_msg);
+            colorPointsPublisher->publish(output_msg);
+            return;
         }
+
+        std::vector<int> valid_indices = get_valid_indices(pcl_cloud);
         std::vector<cv::Point2f> image_points = project_point(pcl_cloud_colored);
 
-
-        //Add color to the points that are in the image
-        for (std::size_t index = 0; index < image_points.size(); index++) {
-            if (is_point_in_image(image_points[index])) {
-                cv::Vec3b color = image_.at<cv::Vec3b>(image_points[index]);
-                pcl_cloud_colored.points[index].r = color[2];
-                pcl_cloud_colored.points[index].g = color[1];
-                pcl_cloud_colored.points[index].b = color[0];
+        //Mpdify color to the points that are in the image
+        for (std::size_t index = 0; index < image_points.size(); index++)
+        {
+            if (is_valid_index(index, valid_indices) && is_point_in_image(image_points[index]))
+            {
+                color = image_.at<cv::Vec3b>(image_points[index]);
+                grey_value = 0.299*color[2]+0.587*color[1]+0.114*color[0];
+                prob_radiation = grey_value/255;
+                RCLCPP_INFO(this->get_logger(), "Probability of radiation: %f grey value", prob_radiation);
+                uint8_t point_color = (prob_radiation > 0.2) ? 255 : 0;
+                pcl_cloud_colored.points[index].r = point_color; // color[2];
+                pcl_cloud_colored.points[index].g = point_color;
+                pcl_cloud_colored.points[index].b = point_color;
             }
         }
 
         // Convert the PCL point cloud with color back to a sensor_msgs::msg::PointCloud2 message
-        sensor_msgs::msg::PointCloud2 output_msg;
         pcl::toROSMsg(pcl_cloud_colored, output_msg);
 
         colorPointsPublisher->publish(output_msg);
@@ -246,7 +197,8 @@ private:
         return cv_points;
     }
 
-    std::vector<cv::Point2f> project_point(const pcl::PointCloud<pcl::PointXYZRGB> pcl_points) {
+    std::vector<cv::Point2f> project_point(const pcl::PointCloud<pcl::PointXYZRGB> pcl_points)
+    {
 
         //TBD read the camera info from rosbags
         // Camera intrinsics
@@ -262,7 +214,6 @@ private:
 
         cv::Mat dist_coeffs_ = cv::Mat::zeros(5, 1, CV_64F);
 
-        getTransform(image_frameId, lidar_frameId, time_stamp);
         cv::Mat rMat = getRotationMatrix();
         cv::Mat tvec = getTranslationVector();
 
@@ -286,6 +237,7 @@ private:
     // ColorPoints Publisher
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr colorPointsPublisher;
 
+    std::unique_ptr<NodeParameters> params;
     cv::Mat image_;
     bool image_received;
     std::string image_frameId;

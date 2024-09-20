@@ -27,6 +27,7 @@ public:
 	float mapPublishRate;
 	float mapTfPublishRate;
 	float maxIdleTime;
+	float probRadiation;
     bool is3D;
 	bool isMapping;
 	bool isOnline;

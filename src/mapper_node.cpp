@@ -199,7 +199,7 @@ private:
         return PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(tf, transformDimension);
     }
 
-    void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    void gotInput(PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
     {
         try
         {
@@ -214,6 +214,8 @@ private:
             }
             try
             {
+                mapper->applyInputFilters(input);
+                // Deskewing goes here
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
             }
@@ -276,12 +278,14 @@ private:
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
     {
-        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+        auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn);
+        gotInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
     }
 
     void laserScanCallback(const sensor_msgs::msg::LaserScan& scanMsgIn)
     {
-        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+        auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn);
+        gotInput(input, scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
     }
 
     void mapPublisherLoop()

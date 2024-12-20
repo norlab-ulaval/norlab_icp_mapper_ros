@@ -1,3 +1,4 @@
+#include "Deskewer.h"
 #include "NodeParameters.h"
 #include <rclcpp/rclcpp.hpp>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
@@ -5,8 +6,6 @@
 #include <norlab_icp_mapper_ros/srv/save_map.hpp>
 #include <norlab_icp_mapper_ros/srv/load_map.hpp>
 #include <norlab_icp_mapper_ros/srv/save_trajectory.hpp>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <std_srvs/srv/empty.hpp>
 #include <memory>
@@ -25,6 +24,8 @@ public:
 
         mapper = std::make_unique<norlab_icp_mapper::Mapper>(params->mappingConfig, params->is3D, params->isOnline,
                                                params->isMapping, params->saveMapCellsOnHardDrive);
+
+        deskewer = std::make_unique<Deskewer>(this->get_logger(), this->get_clock());
 
         if(!params->initialMapFileName.empty())
         {
@@ -129,6 +130,8 @@ private:
     std::thread mapPublisherThread;
     std::thread mapTfPublisherThread;
 
+    std::unique_ptr<Deskewer> deskewer;
+
     std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
     {
         std::string::size_type const extensionPosition(filePath.find_last_of('.'));
@@ -215,7 +218,7 @@ private:
             try
             {
                 mapper->applyInputFilters(input);
-                // Deskewing goes here
+                deskewer->deskew_cloud(input, sensorFrame);
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
             }

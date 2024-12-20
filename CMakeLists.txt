@@ -15,6 +15,7 @@ find_package(libpointmatcher_ros REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(libpointmatcher CONFIG 1.4.2 REQUIRED)
 find_package(norlab_icp_mapper CONFIG 2.0.0 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/SaveTrajectory.srv"
@@ -27,7 +28,11 @@ include_directories(
     ${norlab_icp_mapper_INCLUDE_DIRS}
 )
 
-add_executable(mapper_node src/mapper_node.cpp src/NodeParameters.cpp)
+add_executable(mapper_node
+    src/mapper_node.cpp
+    src/NodeParameters.cpp
+    src/Deskewer.cpp
+)
 
 ament_target_dependencies(mapper_node
     rclcpp
@@ -38,6 +43,7 @@ ament_target_dependencies(mapper_node
     tf2_ros
     tf2
     libpointmatcher_ros
+    tf2_geometry_msgs
 )
 target_link_libraries(mapper_node
     ${norlab_icp_mapper_LIBRARIES}
@@ -51,5 +57,10 @@ install(TARGETS mapper_node
     DESTINATION lib/${PROJECT_NAME}
 )
 
-ament_package()
+install(DIRECTORY launch
+        DESTINATION share/${PROJECT_NAME})
 
+install(DIRECTORY config
+        DESTINATION share/${PROJECT_NAME})
+
+ament_package()

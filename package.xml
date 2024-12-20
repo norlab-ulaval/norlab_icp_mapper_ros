@@ -6,9 +6,9 @@
   <description>A bridge between norlab_icp_mapper and ROS.</description>
   <maintainer email="simon-pierre.deschenes.1@ulaval.ca">Simon-Pierre Deschenes</maintainer>
   <license>new BSD</license>
-  
+
   <buildtool_depend>ament_cmake</buildtool_depend>
-  
+
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
@@ -16,6 +16,7 @@
   <depend>std_srvs</depend>
   <depend>tf2_ros</depend>
   <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
   <depend>libpointmatcher_ros</depend>
 
   <build_depend>rosidl_default_generators</build_depend>
@@ -23,7 +24,7 @@
   <exec_depend>rosidl_default_runtime</exec_depend>
 
   <member_of_group>rosidl_interface_packages</member_of_group>
-  
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>

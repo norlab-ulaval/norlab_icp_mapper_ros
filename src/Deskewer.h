@@ -30,7 +30,7 @@ class Deskewer
     // Constructor
     Deskewer(const rclcpp::Logger &logger, rclcpp::Clock::SharedPtr clock);
 
-    void deskew_cloud(DP &cloud, const std::string &sensor_frame);
+    bool deskewCloud(DP &cloud, const std::string &sensor_frame);
 };
 
 #endif

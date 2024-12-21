@@ -6,6 +6,7 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2/utils.h>
 #include <tf2_ros/buffer.h>
+#include <omp.h>
 
 Deskewer::Deskewer(const rclcpp::Logger& logger, rclcpp::Clock::SharedPtr clock)
     : logger(logger)
@@ -17,13 +18,14 @@ Deskewer::Deskewer(const rclcpp::Logger& logger, rclcpp::Clock::SharedPtr clock)
 
 void Deskewer::deskew_cloud(Deskewer::DP &cloud, const std::string &sensorFrame)
 {
-    tfsCache.clear();
-
    	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+
+    tfsCache.clear();
+    std::unordered_map<int64_t, int64_t> timeCache;
 
     if (!cloud.timeExists(timeFieldName))
     {
-        RCLCPP_WARN(logger, "The input pointcloud does not contain 'time' or 't' or 'timestamp' field. Skipping.");
+        RCLCPP_WARN(logger, "The input pointcloud does not contain the 'time' field. Skipping.");
         return;
     }
 
@@ -34,41 +36,36 @@ void Deskewer::deskew_cloud(Deskewer::DP &cloud, const std::string &sensorFrame)
     }
     rclcpp::Time latestTimeRos(latestTime);
 
-    int64_t cachedTfTime = 0;
     //iterate over the pointcloud, lookup tfs and apply them
     for (int i=0; i<cloud.getNbPoints(); ++i)
     {
-        cachedTfTime = cloud.times(i) / roundToIntervalsOfNanoseconds;
-
-        geometry_msgs::msg::TransformStamped transform;
-        tf2::Stamped<tf2::Transform> stampedTransform;
+        int64_t cachedTfTime = cloud.times(i) / roundToIntervalsOfNanoseconds;
+        timeCache[cloud.times(i)] = cachedTfTime;
         if(tfsCache.count(cachedTfTime) == 0)
         {
             rclcpp::Time laserTimeRos(cloud.times(i));
-
-            // RCLCPP_INFO_STREAM(logger, "Point time: " << cloud.times(i) << " [ns] | Cached time: "  << cachedTfTime << " [ns]\n"
-            //         << "Seconds: "<< laser_beam_time.seconds() << " [s] | Nanosecs: " << laser_beam_time.nanoseconds() << " [ns]");
-
             try{
-                transform = tfBuffer->lookupTransform(sensorFrame,
+                geometry_msgs::msg::TransformStamped transform = tfBuffer->lookupTransform(sensorFrame,
                                                         latestTimeRos,
                                                         sensorFrame,
                                                         laserTimeRos,
                                                         fixedFrameForLaser,
                                                         rclcpp::Duration(0, 2.5e8));
+                tfsCache[cachedTfTime] = transform;
             }
             catch(tf2::TransformException &ex){
                 RCLCPP_ERROR(logger, "Pointcloud callback failed because: %s", ex.what());
                 return;
             }
-            tfsCache[cachedTfTime] = transform;
         }
-        else
-        {
-            transform = tfsCache[cachedTfTime];
-        }
+    }
 
+
+    #pragma omp parallel for
+    for (int i=0; i<cloud.getNbPoints(); ++i) {
         // transform the point
+        int64_t cachedTfTime = timeCache[cloud.times(i)];
+        auto transform = tfsCache[cachedTfTime];
         auto transformationParameters = PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(transform, 4);
         cloud.features.col(i) = transformationParameters * cloud.features.col(i);
     }

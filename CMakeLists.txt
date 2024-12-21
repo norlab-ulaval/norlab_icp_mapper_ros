@@ -16,6 +16,7 @@ find_package(libpointmatcher CONFIG 1.4.2 REQUIRED)
 find_package(norlab_icp_mapper CONFIG 2.0.0 REQUIRED)
 find_package(libpointmatcher_ros 2.0.1 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(OpenMP REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/SaveTrajectory.srv"
@@ -45,8 +46,12 @@ ament_target_dependencies(mapper_node
     libpointmatcher_ros
     tf2_geometry_msgs
 )
+
+# Add OpenMP flags and link OpenMP library
+target_compile_options(mapper_node PRIVATE ${OpenMP_CXX_FLAGS})
 target_link_libraries(mapper_node
     ${norlab_icp_mapper_LIBRARIES}
+    OpenMP::OpenMP_CXX
 )
 
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")

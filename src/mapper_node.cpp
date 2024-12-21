@@ -53,6 +53,8 @@ public:
         tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster(*this));
 
         mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", 2);
+        inputFiltersScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_input_filters", 1);
+        deskewingScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_deskew_publisher", 2);
         odomPublisher = this->create_publisher<nav_msgs::msg::Odometry>("icp_odom", 50);
 
         if(params->is3D)
@@ -116,6 +118,8 @@ private:
     std::mutex mapTfLock;
     PM::TransformationParameters odomToMap;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr mapPublisher;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr inputFiltersScanPublisher;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr deskewingScanPublisher;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
@@ -202,10 +206,29 @@ private:
         return PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(tf, transformDimension);
     }
 
-    void gotInput(PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    void gotInput(PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& cloudStamp)
     {
         try
         {
+            RCLCPP_DEBUG(this->get_logger(), "----INPUT RECEIVED----");
+            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+            mapper->applyInputFilters(input);
+            std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Applied input filters in " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << " [µs]");
+
+            publishAfterInputFilters(input, sensorFrame, cloudStamp);
+            bool deskewSuccessul = deskewer->deskewCloud(input, sensorFrame);
+
+            rclcpp::Time timeStamp = cloudStamp;
+
+            // if deskewing was successful, update the cloud timestamp to match the last point in the cloud
+            if (deskewSuccessul)
+            {
+                publishAfterDeskew(input, sensorFrame, cloudStamp);
+                timeStamp = rclcpp::Time(input.times(input.getNbPoints() - 1));
+            }
+
+
             PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
             PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
 
@@ -217,8 +240,6 @@ private:
             }
             try
             {
-                mapper->applyInputFilters(input);
-                deskewer->deskew_cloud(input, sensorFrame);
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
             }
@@ -289,6 +310,24 @@ private:
     {
         auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn);
         gotInput(input, scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+    }
+
+    void publishAfterInputFilters(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    {
+        if (inputFiltersScanPublisher->get_subscription_count() > 0)
+        {
+            sensor_msgs::msg::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(input, sensorFrame, timeStamp);
+            inputFiltersScanPublisher->publish(mapMsgOut);
+        }
+    }
+
+    void publishAfterDeskew(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    {
+        if (deskewingScanPublisher->get_subscription_count() > 0)
+        {
+            sensor_msgs::msg::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(input, sensorFrame, timeStamp);
+            deskewingScanPublisher->publish(mapMsgOut);
+        }
     }
 
     void mapPublisherLoop()

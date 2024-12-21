@@ -16,7 +16,7 @@ Deskewer::Deskewer(const rclcpp::Logger& logger, rclcpp::Clock::SharedPtr clock)
     tfsCache.reserve(expectedNumberOfPclColumns);
 }
 
-void Deskewer::deskew_cloud(Deskewer::DP &cloud, const std::string &sensorFrame)
+bool Deskewer::deskewCloud(Deskewer::DP &cloud, const std::string &sensorFrame)
 {
    	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
@@ -26,7 +26,7 @@ void Deskewer::deskew_cloud(Deskewer::DP &cloud, const std::string &sensorFrame)
     if (!cloud.timeExists(timeFieldName))
     {
         RCLCPP_WARN(logger, "The input pointcloud does not contain the 'time' field. Skipping.");
-        return;
+        return false;
     }
 
     int64_t latestTime = 0;
@@ -36,7 +36,8 @@ void Deskewer::deskew_cloud(Deskewer::DP &cloud, const std::string &sensorFrame)
     }
     rclcpp::Time latestTimeRos(latestTime);
 
-    //iterate over the pointcloud, lookup tfs and apply them
+    //iterate over the pointcloud, lookup ROS transforms
+    // and fill the lookup table with the transforms
     for (int i=0; i<cloud.getNbPoints(); ++i)
     {
         int64_t cachedTfTime = cloud.times(i) / roundToIntervalsOfNanoseconds;
@@ -55,12 +56,12 @@ void Deskewer::deskew_cloud(Deskewer::DP &cloud, const std::string &sensorFrame)
             }
             catch(tf2::TransformException &ex){
                 RCLCPP_ERROR(logger, "Pointcloud callback failed because: %s", ex.what());
-                return;
+                return false;
             }
         }
     }
 
-
+    // apply the transforms to the pointcloud in parallel
     #pragma omp parallel for
     for (int i=0; i<cloud.getNbPoints(); ++i) {
         // transform the point
@@ -71,5 +72,6 @@ void Deskewer::deskew_cloud(Deskewer::DP &cloud, const std::string &sensorFrame)
     }
 
 	std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-    RCLCPP_INFO_STREAM(logger, "Point cloud deskewed in " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << " [µs]");
+    RCLCPP_DEBUG_STREAM(logger, "Point cloud deskewed in " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << " [µs]");
+    return true;
 }

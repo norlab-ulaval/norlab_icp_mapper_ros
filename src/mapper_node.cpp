@@ -211,7 +211,6 @@ private:
     void gotInput(PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& cloudStamp)
     {
         rclcpp::Time timeStamp = cloudStamp;
-        RCLCPP_DEBUG(this->get_logger(), "----INPUT RECEIVED----");
         std::chrono::steady_clock::time_point begin1 = std::chrono::steady_clock::now();
         try
         {
@@ -307,22 +306,27 @@ private:
         }
 
         std::chrono::steady_clock::time_point end1 = std::chrono::steady_clock::now();
-        RCLCPP_DEBUG_STREAM(this->get_logger(), "Input processing finished in " << std::chrono::duration_cast<std::chrono::milliseconds>(end1 - begin1).count() << " [ms]");
+        RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapping finished in " << std::chrono::duration_cast<std::chrono::milliseconds>(end1 - begin1).count() << " [ms]");
 
     }
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
     {
+        RCLCPP_DEBUG(this->get_logger(), "----POINT CLOUD RECEIVED----");
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn);
         std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-        RCLCPP_INFO_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
+        RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
         gotInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
     }
 
     void laserScanCallback(const sensor_msgs::msg::LaserScan& scanMsgIn)
     {
+        RCLCPP_DEBUG(this->get_logger(), "----LASER SCAN RECEIVED----");
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn);
+        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+        RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
         gotInput(input, scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
     }
 

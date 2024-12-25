@@ -1,5 +1,7 @@
 #include "Deskewer.h"
 #include "NodeParameters.h"
+#include <chrono>
+#include <cstdint>
 #include <rclcpp/rclcpp.hpp>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
 #include <norlab_icp_mapper/Trajectory.h>
@@ -54,7 +56,7 @@ public:
 
         mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", 2);
         inputFiltersScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_input_filters", 1);
-        deskewingScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_deskew_publisher", 2);
+        deskewingScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_deskew", 2);
         odomPublisher = this->create_publisher<nav_msgs::msg::Odometry>("icp_odom", 50);
 
         if(params->is3D)
@@ -208,24 +210,26 @@ private:
 
     void gotInput(PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& cloudStamp)
     {
+        rclcpp::Time timeStamp = cloudStamp;
+        RCLCPP_DEBUG(this->get_logger(), "----INPUT RECEIVED----");
+        std::chrono::steady_clock::time_point begin1 = std::chrono::steady_clock::now();
         try
         {
-            RCLCPP_DEBUG(this->get_logger(), "----INPUT RECEIVED----");
-            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
             mapper->applyInputFilters(input);
             std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-            RCLCPP_DEBUG_STREAM(this->get_logger(), "Applied input filters in " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << " [µs]");
-
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Applied input filters in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin1).count() << " [ms]");
             publishAfterInputFilters(input, sensorFrame, cloudStamp);
-            bool deskewSuccessul = deskewer->deskewCloud(input, sensorFrame);
 
-            rclcpp::Time timeStamp = cloudStamp;
-
-            // if deskewing was successful, update the cloud timestamp to match the last point in the cloud
-            if (deskewSuccessul)
+            if (params->deskew)
             {
-                publishAfterDeskew(input, sensorFrame, cloudStamp);
-                timeStamp = rclcpp::Time(input.times(input.getNbPoints() - 1));
+                bool deskewSuccessul = deskewer->deskewCloud(input, sensorFrame);
+
+                // if deskewing was successful, update the cloud timestamp to match the last point in the cloud
+                if (deskewSuccessul)
+                {
+                    publishAfterDeskew(input, sensorFrame, cloudStamp);
+                    timeStamp = rclcpp::Time(input.times(input.getNbPoints() - 1));
+                }
             }
 
 
@@ -240,8 +244,11 @@ private:
             }
             try
             {
+                std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
+                std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+                RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapper call executed in: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
             }
             catch (const PM::ConvergenceError& convergenceError)
             {
@@ -298,11 +305,18 @@ private:
         {
             RCLCPP_WARN(this->get_logger(), "%s", ex.what());
         }
+
+        std::chrono::steady_clock::time_point end1 = std::chrono::steady_clock::now();
+        RCLCPP_DEBUG_STREAM(this->get_logger(), "Input processing finished in " << std::chrono::duration_cast<std::chrono::milliseconds>(end1 - begin1).count() << " [ms]");
+
     }
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
     {
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn);
+        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+        RCLCPP_INFO_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
         gotInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
     }
 

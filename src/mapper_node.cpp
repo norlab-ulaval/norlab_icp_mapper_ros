@@ -227,7 +227,7 @@ private:
                 if (deskewSuccessul)
                 {
                     publishAfterDeskew(input, sensorFrame, cloudStamp);
-                    timeStamp = rclcpp::Time(input.times(input.getNbPoints() - 1));
+                    timeStamp = rclcpp::Time(input.times(input.getNbPoints() - 1), timeStamp.get_clock_type());
                 }
             }
 

@@ -14,8 +14,8 @@ class Deskewer
     typedef PointMatcher<float> PM;
     typedef PM::DataPoints DP;
 
-    uint expectedNumberOfPclColumns = 4000;
-    uint roundToIntervalsOfNanoseconds = 50000;
+    uint expectedUniqueDeskewingTFNumber;
+    uint deskewingRoundToNSecs;
     std::unique_ptr<tf2_ros::Buffer> tfBuffer = nullptr;
     std::unique_ptr<tf2_ros::TransformListener> tfListener = nullptr;
     rclcpp::Logger logger;
@@ -28,7 +28,7 @@ class Deskewer
 
   public:
     // Constructor
-    Deskewer(const rclcpp::Logger &logger, rclcpp::Clock::SharedPtr clock);
+    Deskewer(const rclcpp::Logger &logger, rclcpp::Clock::SharedPtr clock, uint expectedUniqueDeskewingTFNumber, uint deskewingRoundToNSecs);
 
     bool deskewCloud(DP &cloud, const std::string &sensor_frame);
 };

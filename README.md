@@ -1,10 +1,12 @@
 # norlab_icp_mapper_ros
+
 A bridge between [norlab_icp_mapper](https://github.com/norlab-ulaval/norlab_icp_mapper/) and ROS.
 Check the [mapper's documentation](https://norlab-icp-mapper.readthedocs.io/en/latest/UsingInRos/) for a detailed guide.
 
 ## Node Parameters
+
 |               Name                |                                                 Description                                                 |        Possible values         |                       Default Value                        |
-|:---------------------------------:|:-----------------------------------------------------------------------------------------------------------:|:------------------------------:|:----------------------------------------------------------:|
+| :-------------------------------: | :---------------------------------------------------------------------------------------------------------: | :----------------------------: | :--------------------------------------------------------: |
 |            odom_frame             |                                          Frame used for odometry.                                           |           Any string           |                           "odom"                           |
 |            robot_frame            |                                        Frame centered on the robot.                                         |           Any string           |                        "base_link"                         |
 |          mapping_config           |                               Path to the file containing the mapping config.                               |         Any file path          |                             ""                             |
@@ -20,18 +22,24 @@ Check the [mapper's documentation](https://norlab-icp-mapper.readthedocs.io/en/l
 |               is_3D               |                       true when a 3D sensor is used, false when a 2D sensor is used.                        |         {true, false}          |                            true                            |
 |   save_map_cells_on_hard_drive    |      true when map cell storage on hard drive is wanted, false when map cell storage in RAM is wanted.      |         {true, false}          |                            true                            |
 | publish_tfs_between_registrations |      When false, the map tf is published only after registration. Otherwise with map_tf_publish_rate.       |         {true, false}          |                            true                            |
-
+|              deskew               |               Set to true if you want to apply motion compensation on the input point cloud.                |         {true, false}          |                            true                            |
+|  expectedUniqueDeskewingTFNumber  |                    How much memory should we reserve for the per-point transformations.                     |       A positive integer       |                            4000                            |
+|       deskewingRoundToNSecs       |           How much should each point's timestamp be rounded for deskewing transformation search.            |       A positive integer       |                           50000                            |
 
 ## Node Topics
-|   Name    |                     Description                     |
-|:---------:|:---------------------------------------------------:|
-| points_in |  Topic from which the input points are retrieved.   |
-|    map    |        Topic in which the map is published.         |
-| icp_odom  | Topic in which the corrected odometry is published. |
+
+|           Name           |                            Description                             |
+| :----------------------: | :----------------------------------------------------------------: |
+|        points_in         |          Topic from which the input points are retrieved.          |
+|           map            |                Topic in which the map is published.                |
+|         icp_odom         |        Topic in which the corrected odometry is published.         |
+| scan_after_input_filters |        The input scan, after all input filters are applied.        |
+|    scan_after_deskew     | The input scan, after all input filters and deskewing are applied. |
 
 ## Node Services
+
 |        Name        |          Description          | Parameter Name |               Parameter Description                |
-|:------------------:|:-----------------------------:|:--------------:|:--------------------------------------------------:|
+| :----------------: | :---------------------------: | :------------: | :------------------------------------------------: |
 |      save_map      |    Saves the current map.     |    filename    |    Path of the file in which the map is saved.     |
 |  save_trajectory   | Saves the current trajectory. |    filename    | Path of the file in which the trajectory is saved. |
 | reload_yaml_config | Reload the YAML config file.  |                |                                                    |
@@ -46,6 +54,8 @@ flowchart LR
 /points_in([ /points_in<br>sensor_msgs/msg/PointCloud2 ]):::bugged
 /icp_odom([ /icp_odom<br>nav_msgs/msg/Odometry ]):::bugged
 /map([ /map<br>sensor_msgs/msg/PointCloud2 ]):::bugged
+/scan_after_input_filters([ /map<br>sensor_msgs/msg/PointCloud2 ]):::bugged
+/scan_after_deskew([ /map<br>sensor_msgs/msg/PointCloud2 ]):::bugged
 /disable_mapping[/ /disable_mapping<br>std_srvs/srv/Empty \]:::bugged
 /enable_mapping[/ /enable_mapping<br>std_srvs/srv/Empty \]:::bugged
 /load_map[/ /load_map<br>norlab_icp_mapper_ros/srv/LoadMap \]:::bugged
@@ -92,4 +102,3 @@ style nodes opacity:0.15,fill:#FFF
 style connection opacity:0.15,fill:#FFF
 
 ```
-

@@ -8,12 +8,14 @@
 #include <tf2_ros/buffer.h>
 #include <omp.h>
 
-Deskewer::Deskewer(const rclcpp::Logger& logger, rclcpp::Clock::SharedPtr clock)
-    : logger(logger)
+Deskewer::Deskewer(const rclcpp::Logger& logger, rclcpp::Clock::SharedPtr clock, uint expectedUniqueDeskewingTFNumber, uint deskewingRoundToNSecs)
+    : logger(logger),
+    expectedUniqueDeskewingTFNumber(expectedUniqueDeskewingTFNumber),
+    deskewingRoundToNSecs(deskewingRoundToNSecs)
 {
     tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(clock));
     tfListener = std::unique_ptr<tf2_ros::TransformListener>(new tf2_ros::TransformListener(*tfBuffer));
-    tfsCache.reserve(expectedNumberOfPclColumns);
+    tfsCache.reserve(expectedUniqueDeskewingTFNumber);
 }
 
 bool Deskewer::deskewCloud(Deskewer::DP &cloud, const std::string &sensorFrame)
@@ -40,7 +42,7 @@ bool Deskewer::deskewCloud(Deskewer::DP &cloud, const std::string &sensorFrame)
     // and fill the lookup table with the transforms
     for (int i=0; i<cloud.getNbPoints(); ++i)
     {
-        int64_t cachedTfTime = cloud.times(i) / roundToIntervalsOfNanoseconds;
+        int64_t cachedTfTime = cloud.times(i) / deskewingRoundToNSecs;
         timeCache[cloud.times(i)] = cachedTfTime;
         if(tfsCache.count(cachedTfTime) == 0)
         {

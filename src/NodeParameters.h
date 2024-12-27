@@ -33,6 +33,8 @@ public:
 	bool saveMapCellsOnHardDrive;
 	bool publishTfsBetweenRegistrations;
 	bool deskew;
+	int expectedUniqueDeskewingTFNumber;
+	int deskewingRoundToNSecs;
 
 	NodeParameters(rclcpp::Node& node);
 };

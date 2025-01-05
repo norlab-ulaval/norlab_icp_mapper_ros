@@ -23,7 +23,6 @@ bool Deskewer::deskewCloud(Deskewer::DP &cloud, const std::string &sensorFrame)
    	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
     tfsCache.clear();
-    std::unordered_map<int64_t, int64_t> timeCache;
 
     if (!cloud.timeExists(timeFieldName))
     {
@@ -43,7 +42,6 @@ bool Deskewer::deskewCloud(Deskewer::DP &cloud, const std::string &sensorFrame)
     for (int i=0; i<cloud.getNbPoints(); ++i)
     {
         int64_t cachedTfTime = cloud.times(i) / deskewingRoundToNSecs;
-        timeCache[cloud.times(i)] = cachedTfTime;
         if(tfsCache.count(cachedTfTime) == 0)
         {
             rclcpp::Time laserTimeRos(cloud.times(i));
@@ -67,7 +65,7 @@ bool Deskewer::deskewCloud(Deskewer::DP &cloud, const std::string &sensorFrame)
     #pragma omp parallel for
     for (int i=0; i<cloud.getNbPoints(); ++i) {
         // transform the point
-        int64_t cachedTfTime = timeCache[cloud.times(i)];
+        int64_t cachedTfTime = cloud.times(i) / deskewingRoundToNSecs;
         auto transform = tfsCache[cachedTfTime];
         auto transformationParameters = PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(transform, 4);
         cloud.features.col(i) = transformationParameters * cloud.features.col(i);

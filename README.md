@@ -24,7 +24,7 @@ Check the [mapper's documentation](https://norlab-icp-mapper.readthedocs.io/en/l
 |  publish_tfs_between_registrations  |      When false, the map tf is published only after registration. Otherwise with map_tf_publish_rate.       |         {true, false}          |                            true                            |
 |               deskew                |               Set to true if you want to apply motion compensation on the input point cloud.                |         {true, false}          |                            true                            |
 | expected_unique_deskewing_TF_number |                    How much memory should we reserve for the per-point transformations.                     |       A positive integer       |                            4000                            |
-|      deskewing_round_to_N_secs      |           How much should each point's timestamp be rounded for deskewing transformation search.            |       A positive integer       |                           50000                            |
+|     deskewing_round_to_nanosecs     |           How much should each point's timestamp be rounded for deskewing transformation search.            |       A positive integer       |                           50000                            |
 
 ## Node Topics
 

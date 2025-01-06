@@ -34,7 +34,7 @@ public:
 	bool publishTfsBetweenRegistrations;
 	bool deskew;
 	int expectedUniqueDeskewingTFNumber;
-	int deskewingRoundToNSecs;
+	int deskewingRoundToNanoSecs;
 
 	NodeParameters(rclcpp::Node& node);
 };

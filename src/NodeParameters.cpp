@@ -28,7 +28,7 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<bool>("publish_tfs_between_registrations", true);
     node.declare_parameter<bool>("deskew", true);
     node.declare_parameter<int>("expected_unique_deskewing_TF_number", 4000);
-    node.declare_parameter<int>("deskewing_round_to_N_secs", 50000);
+    node.declare_parameter<int>("deskewing_round_to_nanosecs", 50000);
 }
 
 void NodeParameters::retrieveParameters(rclcpp::Node& node)
@@ -50,7 +50,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
 	node.get_parameter("publish_tfs_between_registrations", publishTfsBetweenRegistrations);
 	node.get_parameter("deskew", deskew);
 	node.get_parameter("expected_unique_deskewing_TF_number", expectedUniqueDeskewingTFNumber);
-	node.get_parameter("deskewing_round_to_N_secs", deskewingRoundToNSecs);
+	node.get_parameter("deskewing_round_to_nanosecs", deskewingRoundToNanoSecs);
 }
 
 void NodeParameters::validateParameters() const
@@ -123,9 +123,9 @@ void NodeParameters::validateParameters() const
             {
                 throw std::runtime_error("Expected unique deskewing TF value must be positive: " + std::to_string(expectedUniqueDeskewingTFNumber));
             }
-        if (deskewingRoundToNSecs <= 0)
+        if (deskewingRoundToNanoSecs <= 0)
             {
-                throw std::runtime_error("Deskewing round to nsecs value must be positive: " + std::to_string(deskewingRoundToNSecs));
+                throw std::runtime_error("Deskewing round to nsecs value must be positive: " + std::to_string(deskewingRoundToNanoSecs));
             }
 	}
 }

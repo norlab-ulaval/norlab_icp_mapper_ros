@@ -8,10 +8,10 @@
 #include <tf2_ros/buffer.h>
 #include <omp.h>
 
-Deskewer::Deskewer(const rclcpp::Logger& logger, rclcpp::Clock::SharedPtr clock, uint expectedUniqueDeskewingTFNumber, uint deskewingRoundToNSecs)
+Deskewer::Deskewer(const rclcpp::Logger& logger, rclcpp::Clock::SharedPtr clock, uint expectedUniqueDeskewingTFNumber, uint deskewingRoundToNanoSecs)
     : logger(logger),
     expectedUniqueDeskewingTFNumber(expectedUniqueDeskewingTFNumber),
-    deskewingRoundToNSecs(deskewingRoundToNSecs)
+    deskewingRoundToNanoSecs(deskewingRoundToNanoSecs)
 {
     tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(clock));
     tfListener = std::unique_ptr<tf2_ros::TransformListener>(new tf2_ros::TransformListener(*tfBuffer));
@@ -41,7 +41,7 @@ bool Deskewer::deskewCloud(Deskewer::DP &cloud, const std::string &sensorFrame)
     // and fill the lookup table with the transforms
     for (int i=0; i<cloud.getNbPoints(); ++i)
     {
-        int64_t cachedTfTime = cloud.times(i) / deskewingRoundToNSecs;
+        int64_t cachedTfTime = cloud.times(i) / deskewingRoundToNanoSecs;
         if(tfsCache.count(cachedTfTime) == 0)
         {
             rclcpp::Time laserTimeRos(cloud.times(i));
@@ -65,7 +65,7 @@ bool Deskewer::deskewCloud(Deskewer::DP &cloud, const std::string &sensorFrame)
     #pragma omp parallel for
     for (int i=0; i<cloud.getNbPoints(); ++i) {
         // transform the point
-        int64_t cachedTfTime = cloud.times(i) / deskewingRoundToNSecs;
+        int64_t cachedTfTime = cloud.times(i) / deskewingRoundToNanoSecs;
         auto transform = tfsCache[cachedTfTime];
         auto transformationParameters = PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(transform, 4);
         cloud.features.col(i) = transformationParameters * cloud.features.col(i);

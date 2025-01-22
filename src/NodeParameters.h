@@ -32,6 +32,7 @@ public:
 	bool isOnline;
 	bool saveMapCellsOnHardDrive;
 	bool publishTfsBetweenRegistrations;
+	bool localizing;
 
 	NodeParameters(rclcpp::Node& node);
 };

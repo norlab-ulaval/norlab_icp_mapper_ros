@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 
 class MapperNode : public rclcpp::Node
 {
@@ -71,6 +72,10 @@ public:
                                                                                                          std::placeholders::_1));
         }
 
+        relocalizePoseSubscription = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("pose_in", messageQueueSize,
+                                                                                               std::bind(&MapperNode::relocalizePoseCallback, this,
+                                                                                                         std::placeholders::_1));
+
         reloadYamlConfigService = this->create_service<std_srvs::srv::Empty>("reload_yaml_config",
                                                                              std::bind(&MapperNode::reloadYamlConfigCallback, this, std::placeholders::_1,
                                                                                        std::placeholders::_2));
@@ -89,11 +94,27 @@ public:
         disableMappingService = this->create_service<std_srvs::srv::Empty>("disable_mapping",
                                                                            std::bind(&MapperNode::disableMappingCallback, this, std::placeholders::_1,
                                                                                      std::placeholders::_2));
-
+        enableLocalizationService = this->create_service<std_srvs::srv::Empty>("enable_loc",
+                                                                          std::bind(&MapperNode::enableLocCallback, this, std::placeholders::_1,
+                                                                                    std::placeholders::_2));
+        disableLocalizationService = this->create_service<std_srvs::srv::Empty>("disable_loc",
+                                                                           std::bind(&MapperNode::disableLocCallback, this, std::placeholders::_1,
+                                                                                     std::placeholders::_2));
         mapPublisherThread = std::thread(&MapperNode::mapPublisherLoop, this);
         if(params->publishTfsBetweenRegistrations)
         {
             mapTfPublisherThread = std::thread(&MapperNode::mapTfPublisherLoop, this);
+        }
+
+        // Ensure proper localization and mapping states.
+        isLocalizing = params->localizing;
+        if(!isLocalizing)
+        {
+    	    mapper->setIsMapping(false);
+        }
+        if(mapper->getIsMapping())
+        {
+            isLocalizing = true;
         }
     }
 
@@ -118,6 +139,7 @@ private:
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
+    rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr relocalizePoseSubscription;
     PM::TransformationParameters previousRobotToMap;
     rclcpp::Time previousTimeStamp;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reloadYamlConfigService;
@@ -126,8 +148,11 @@ private:
     rclcpp::Service<norlab_icp_mapper_ros::srv::SaveTrajectory>::SharedPtr saveTrajectoryService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr enableMappingService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr disableMappingService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr enableLocalizationService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr disableLocalizationService;
     std::thread mapPublisherThread;
     std::thread mapTfPublisherThread;
+    bool isLocalizing;
 
     std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
     {
@@ -276,7 +301,10 @@ private:
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
     {
-        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+        if(isLocalizing)
+        {
+            gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+        }
     }
 
     void laserScanCallback(const sensor_msgs::msg::LaserScan& scanMsgIn)
@@ -374,6 +402,10 @@ private:
     void enableMappingCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
     	RCLCPP_INFO(this->get_logger(), "Enabling mapping");
+        if(!isLocalizing)
+        {
+            isLocalizing = true;
+        }
     	mapper->setIsMapping(true);
     }
 
@@ -381,6 +413,36 @@ private:
     {
         RCLCPP_INFO(this->get_logger(), "Disabling mapping");
     	mapper->setIsMapping(false);
+    }
+
+    void enableLocCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    {
+    	RCLCPP_INFO(this->get_logger(), "Enabling localization");
+    	isLocalizing = true;
+    }
+
+    void disableLocCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    {
+        RCLCPP_INFO(this->get_logger(), "Disabling localization");
+        if(mapper->getIsMapping())
+        {
+    	    mapper->setIsMapping(false);
+        }
+        isLocalizing = false;
+    }
+
+    void relocalizePoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped& poseMsgIn)
+    {
+        if (mapper->getIsMapping())
+        {
+            RCLCPP_WARN(this->get_logger(), "Can not relocalize the robot if mapping is active.");
+        }
+        else
+        {
+            RCLCPP_INFO(this->get_logger(), "Using 2D pose estimate given.");
+            int homogeneousDim = params->is3D ? 4 : 3;
+            setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(poseMsgIn.pose.pose, homogeneousDim));
+        }
     }
 };
 

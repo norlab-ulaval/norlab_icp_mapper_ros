@@ -107,6 +107,7 @@ public:
         }
 
         // Ensure proper localization and mapping states.
+        isLocalizingLock.lock();
         isLocalizing = params->localizing;
         if(!isLocalizing)
         {
@@ -116,6 +117,7 @@ public:
         {
             isLocalizing = true;
         }
+        isLocalizingLock.unlock();
     }
 
 private:
@@ -153,6 +155,8 @@ private:
     std::thread mapPublisherThread;
     std::thread mapTfPublisherThread;
     bool isLocalizing;
+    std::mutex isLocalizingLock;
+
 
     std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
     {
@@ -301,15 +305,22 @@ private:
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
     {
+        isLocalizingLock.lock();
         if(isLocalizing)
         {
             gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
         }
+        isLocalizingLock.unlock();
     }
 
     void laserScanCallback(const sensor_msgs::msg::LaserScan& scanMsgIn)
     {
-        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+        isLocalizingLock.lock();
+        if(isLocalizing)
+        {
+            gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+        }
+        isLocalizingLock.unlock();    
     }
 
     void mapPublisherLoop()
@@ -402,10 +413,12 @@ private:
     void enableMappingCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
     	RCLCPP_INFO(this->get_logger(), "Enabling mapping");
+        isLocalizingLock.lock();
         if(!isLocalizing)
         {
             isLocalizing = true;
         }
+        isLocalizingLock.unlock();
     	mapper->setIsMapping(true);
     }
 
@@ -418,7 +431,9 @@ private:
     void enableLocCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
     	RCLCPP_INFO(this->get_logger(), "Enabling localization");
+        isLocalizingLock.lock();
     	isLocalizing = true;
+        isLocalizingLock.unlock();
     }
 
     void disableLocCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
@@ -428,7 +443,9 @@ private:
         {
     	    mapper->setIsMapping(false);
         }
+        isLocalizingLock.lock();
         isLocalizing = false;
+        isLocalizingLock.unlock();
     }
 
     void relocalizePoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped& poseMsgIn)

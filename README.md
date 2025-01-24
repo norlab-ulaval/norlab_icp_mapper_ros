@@ -56,6 +56,8 @@ flowchart LR
 /map([ /map<br>sensor_msgs/msg/PointCloud2 ]):::bugged
 /disable_mapping[/ /disable_mapping<br>std_srvs/srv/Empty \]:::bugged
 /enable_mapping[/ /enable_mapping<br>std_srvs/srv/Empty \]:::bugged
+/disable_loc[/ /disable_loc<br>std_srvs/srv/Empty \]:::bugged
+/enable_loc[/ /enable_loc<br>std_srvs/srv/Empty \]:::bugged
 /load_map[/ /load_map<br>norlab_icp_mapper_ros/srv/LoadMap \]:::bugged
 /reload_yaml_config[/ /reload_yaml_config<br>std_srvs/srv/Empty \]:::bugged
 /save_map[/ /save_map<br>norlab_icp_mapper_ros/srv/SaveMap \]:::bugged

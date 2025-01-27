@@ -1,0 +1,66 @@
+mapper:
+  updateCondition:
+    type: delay
+    value: 0.5
+
+  sensorMaxRange: 100
+
+  mapperModule:
+    - PointDistanceMapperModule:
+        minDistNewPoint: 0.1
+
+input:
+  - RandomSamplingDataPointsFilter:
+      prob: 0.8
+
+  - AddDescriptorDataPointsFilter:
+      descriptorName: probabilityDynamic
+      descriptorDimension: 1
+      descriptorValues: [0.6]
+
+  - SamplingSurfaceNormalDataPointsFilter:
+      ratio: 0.5
+      knn: 7
+      samplingMethod: 0
+      maxBoxDim: inf
+      averageExistingDescriptors: 1
+      keepNormals: 1
+      keepDensities: 0
+      keepEigenValues: 0
+      keepEigenVectors: 0
+
+icp:
+  readingDataPointsFilters:
+    - RandomSamplingDataPointsFilter:
+        prob: 0.8
+
+  referenceDataPointsFilters:
+
+  outlierFilters:
+    - TrimmedDistOutlierFilter:
+        ratio: 0.75
+
+  matcher:
+    KDTreeMatcher:
+      knn: 3
+      epsilon: 1
+      searchType: 1
+      maxDist: 200.0
+
+  errorMinimizer:
+    PointToPlaneErrorMinimizer:
+      force4DOF: 1
+
+  transformationCheckers:
+    - CounterTransformationChecker:
+        maxIterationCount: 40
+    - DifferentialTransformationChecker:
+        minDiffRotErr: 0.001
+        minDiffTransErr: 0.001
+        smoothLength: 3
+
+  inspector: NullInspector
+
+  logger: NullLogger
+
+post:

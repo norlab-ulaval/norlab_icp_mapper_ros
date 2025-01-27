@@ -26,6 +26,9 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<bool>("is_online", true);
     node.declare_parameter<bool>("save_map_cells_on_hard_drive", true);
     node.declare_parameter<bool>("publish_tfs_between_registrations", true);
+    node.declare_parameter<bool>("deskew", true);
+    node.declare_parameter<int>("expected_unique_deskewing_TF_number", 4000);
+    node.declare_parameter<int>("deskewing_round_to_nanosecs", 50000);
     node.declare_parameter<bool>("localizing", true);
 }
 
@@ -46,6 +49,9 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
 	node.get_parameter("is_online", isOnline);
 	node.get_parameter("save_map_cells_on_hard_drive", saveMapCellsOnHardDrive);
 	node.get_parameter("publish_tfs_between_registrations", publishTfsBetweenRegistrations);
+	node.get_parameter("deskew", deskew);
+	node.get_parameter("expected_unique_deskewing_TF_number", expectedUniqueDeskewingTFNumber);
+	node.get_parameter("deskewing_round_to_nanosecs", deskewingRoundToNanoSecs);
 	node.get_parameter("localizing", localizing);
 }
 
@@ -111,6 +117,18 @@ void NodeParameters::validateParameters() const
 	if(!isMapping && initialMapFileName.empty())
 	{
 		throw std::runtime_error("is mapping is set to false, but initial map file name was not specified.");
+	}
+
+	if (deskew)
+	{
+        if (expectedUniqueDeskewingTFNumber <= 0)
+            {
+                throw std::runtime_error("Expected unique deskewing TF value must be positive: " + std::to_string(expectedUniqueDeskewingTFNumber));
+            }
+        if (deskewingRoundToNanoSecs <= 0)
+            {
+                throw std::runtime_error("Deskewing round to nsecs value must be positive: " + std::to_string(deskewingRoundToNanoSecs));
+            }
 	}
 }
 

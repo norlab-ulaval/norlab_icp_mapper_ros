@@ -1,12 +1,13 @@
+#include "Deskewer.h"
 #include "NodeParameters.h"
+#include <chrono>
+#include <cstdint>
 #include <rclcpp/rclcpp.hpp>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
 #include <norlab_icp_mapper/Trajectory.h>
 #include <norlab_icp_mapper_ros/srv/save_map.hpp>
 #include <norlab_icp_mapper_ros/srv/load_map.hpp>
 #include <norlab_icp_mapper_ros/srv/save_trajectory.hpp>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <std_srvs/srv/empty.hpp>
 #include <memory>
@@ -26,6 +27,8 @@ public:
 
         mapper = std::make_unique<norlab_icp_mapper::Mapper>(params->mappingConfig, params->is3D, params->isOnline,
                                                params->isMapping, params->saveMapCellsOnHardDrive);
+
+        deskewer = std::make_unique<Deskewer>(this->get_logger(), this->get_clock(), params->expectedUniqueDeskewingTFNumber, params->deskewingRoundToNanoSecs);
 
         if(!params->initialMapFileName.empty())
         {
@@ -57,6 +60,8 @@ public:
         tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster(*this));
 
         mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", 2);
+        inputFiltersScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_input_filters", 1);
+        deskewingScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_deskew", 1);
         odomPublisher = this->create_publisher<nav_msgs::msg::Odometry>("icp_odom", 50);
 
         if(params->is3D)
@@ -142,6 +147,8 @@ private:
     std::mutex mapTfLock;
     PM::TransformationParameters odomToMap;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr mapPublisher;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr inputFiltersScanPublisher;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr deskewingScanPublisher;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
@@ -161,6 +168,8 @@ private:
     bool isLocalizing;
     std::mutex isLocalizingLock;
 
+
+    std::unique_ptr<Deskewer> deskewer;
 
     std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
     {
@@ -232,10 +241,30 @@ private:
         return PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(tf, transformDimension);
     }
 
-    void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    void gotInput(PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& cloudStamp)
     {
+        rclcpp::Time timeStamp = cloudStamp;
+        std::chrono::steady_clock::time_point processingStartTime = std::chrono::steady_clock::now();
         try
         {
+            mapper->applyInputFilters(input);
+            std::chrono::steady_clock::time_point filterEndTime = std::chrono::steady_clock::now();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Applied input filters in " << std::chrono::duration_cast<std::chrono::milliseconds>(filterEndTime - processingStartTime).count() << " [ms]");
+            publishAfterInputFilters(input, sensorFrame, cloudStamp);
+
+            if (params->deskew)
+            {
+                bool deskewSuccessuful = deskewer->deskewCloud(input, sensorFrame);
+
+                // if deskewing was successful, update the cloud timestamp to match the last point in the cloud
+                if (deskewSuccessuful)
+                {
+                    publishAfterDeskew(input, sensorFrame, cloudStamp);
+                    timeStamp = rclcpp::Time(input.times(input.getNbPoints() - 1), timeStamp.get_clock_type());
+                }
+            }
+
+
             PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
             PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
             RCLCPP_WARN_STREAM(this->get_logger(), "Value of hasToSetRobotPose: " << hasToSetRobotPose);
@@ -251,9 +280,12 @@ private:
             }
             try
             {
-                RCLCPP_WARN_STREAM(this->get_logger(), "Value of sensorToMapBeforeUpdate: " << sensorToMapBeforeUpdate);                
+                RCLCPP_WARN_STREAM(this->get_logger(), "Value of sensorToMapBeforeUpdate: " << sensorToMapBeforeUpdate);
+                std::chrono::steady_clock::time_point mappingStartTime = std::chrono::steady_clock::now();
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
+                std::chrono::steady_clock::time_point mappingEndTime = std::chrono::steady_clock::now();
+                RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapper call executed in: " << std::chrono::duration_cast<std::chrono::milliseconds>(mappingEndTime - mappingStartTime).count() << " [ms]");
             }
             catch (const PM::ConvergenceError& convergenceError)
             {
@@ -310,26 +342,58 @@ private:
         {
             RCLCPP_WARN(this->get_logger(), "%s", ex.what());
         }
+
+        std::chrono::steady_clock::time_point processingEndTime = std::chrono::steady_clock::now();
+        RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapping finished in " << std::chrono::duration_cast<std::chrono::milliseconds>(processingEndTime - processingStartTime).count() << " [ms]");
+
     }
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
     {
+        RCLCPP_DEBUG(this->get_logger(), "----POINT CLOUD RECEIVED----");
         isLocalizingLock.lock();
         if(isLocalizing)
         {
-            gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+            auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn);
+            std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
+            gotInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
         }
         isLocalizingLock.unlock();
     }
 
     void laserScanCallback(const sensor_msgs::msg::LaserScan& scanMsgIn)
     {
+        RCLCPP_DEBUG(this->get_logger(), "----LASER SCAN RECEIVED----");
         isLocalizingLock.lock();
         if(isLocalizing)
         {
-            gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+            auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn);
+            std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
+            gotInput(input, scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
         }
-        isLocalizingLock.unlock();    
+        isLocalizingLock.unlock();
+    }
+
+    void publishAfterInputFilters(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    {
+        if (inputFiltersScanPublisher->get_subscription_count() > 0)
+        {
+            sensor_msgs::msg::PointCloud2 filteredInputMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(input, sensorFrame, timeStamp);
+            inputFiltersScanPublisher->publish(filteredInputMsgOut);
+        }
+    }
+
+    void publishAfterDeskew(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    {
+        if (deskewingScanPublisher->get_subscription_count() > 0)
+        {
+            sensor_msgs::msg::PointCloud2 deskewedCloudMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(input, sensorFrame, timeStamp);
+            deskewingScanPublisher->publish(deskewedCloudMsgOut);
+        }
     }
 
     void mapPublisherLoop()

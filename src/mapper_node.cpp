@@ -35,6 +35,10 @@ public:
         {
             setRobotPose(params->initialRobotPose);
         }
+        else
+        {
+            hasToSetRobotPose = false;
+        }
 
         int messageQueueSize;
         if(params->isOnline)
@@ -127,7 +131,7 @@ private:
     std::shared_ptr<PM::Transformation> transformation;
     std::unique_ptr<norlab_icp_mapper::Mapper> mapper;
     PM::TransformationParameters robotPoseToSet;
-    bool hasToSetRobotPose;
+    bool hasToSetRobotPose = false;
     std::thread mapperShutdownThread;
     std::mutex idleTimeLock;
     std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;
@@ -234,6 +238,10 @@ private:
         {
             PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
             PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
+            RCLCPP_WARN_STREAM(this->get_logger(), "Value of hasToSetRobotPose: " << hasToSetRobotPose);
+            RCLCPP_WARN_STREAM(this->get_logger(), "Value of sensorToOdom: " << sensorToOdom);
+            RCLCPP_WARN_STREAM(this->get_logger(), "Value of odomToMap: " << odomToMap);
+            RCLCPP_WARN_STREAM(this->get_logger(), "Value of sensorToMapBeforeUpdate: " << sensorToMapBeforeUpdate);
 
             if(hasToSetRobotPose)
             {
@@ -243,6 +251,7 @@ private:
             }
             try
             {
+                RCLCPP_WARN_STREAM(this->get_logger(), "Value of sensorToMapBeforeUpdate: " << sensorToMapBeforeUpdate);                
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
             }

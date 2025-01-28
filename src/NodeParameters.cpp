@@ -29,6 +29,7 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<bool>("deskew", true);
     node.declare_parameter<int>("expected_unique_deskewing_TF_number", 4000);
     node.declare_parameter<int>("deskewing_round_to_nanosecs", 50000);
+    node.declare_parameter<bool>("localizing", true);
 }
 
 void NodeParameters::retrieveParameters(rclcpp::Node& node)
@@ -51,6 +52,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
 	node.get_parameter("deskew", deskew);
 	node.get_parameter("expected_unique_deskewing_TF_number", expectedUniqueDeskewingTFNumber);
 	node.get_parameter("deskewing_round_to_nanosecs", deskewingRoundToNanoSecs);
+	node.get_parameter("localizing", localizing);
 }
 
 void NodeParameters::validateParameters() const

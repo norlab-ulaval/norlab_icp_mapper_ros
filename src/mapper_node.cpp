@@ -165,10 +165,12 @@ private:
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr disableLocalizationService;
     std::thread mapPublisherThread;
     std::thread mapTfPublisherThread;
+
     bool isLocalizing;
     std::mutex isLocalizingLock;
 
 
+    std::unique_ptr<Deskewer> deskewer;
     std::unique_ptr<Deskewer> deskewer;
 
     std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
@@ -267,11 +269,6 @@ private:
 
             PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
             PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
-            RCLCPP_WARN_STREAM(this->get_logger(), "Value of hasToSetRobotPose: " << hasToSetRobotPose);
-            RCLCPP_WARN_STREAM(this->get_logger(), "Value of sensorToOdom: " << sensorToOdom);
-            RCLCPP_WARN_STREAM(this->get_logger(), "Value of odomToMap: " << odomToMap);
-            RCLCPP_WARN_STREAM(this->get_logger(), "Value of sensorToMapBeforeUpdate: " << sensorToMapBeforeUpdate);
-
             if(hasToSetRobotPose)
             {
                 PM::TransformationParameters sensorToRobot = findTransform(sensorFrame, params->robotFrame, timeStamp, input.getHomogeneousDim());
@@ -280,7 +277,6 @@ private:
             }
             try
             {
-                RCLCPP_WARN_STREAM(this->get_logger(), "Value of sensorToMapBeforeUpdate: " << sensorToMapBeforeUpdate);
                 std::chrono::steady_clock::time_point mappingStartTime = std::chrono::steady_clock::now();
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));

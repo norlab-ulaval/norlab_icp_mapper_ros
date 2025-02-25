@@ -32,6 +32,10 @@ public:
 	bool isOnline;
 	bool saveMapCellsOnHardDrive;
 	bool publishTfsBetweenRegistrations;
+	bool deskew;
+	int expectedUniqueDeskewingTFNumber;
+	int deskewingRoundToNanoSecs;
+	bool localizing;
 
 	NodeParameters(rclcpp::Node& node);
 };

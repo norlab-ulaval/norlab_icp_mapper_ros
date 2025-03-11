@@ -36,6 +36,7 @@ public:
 	int expectedUniqueDeskewingTFNumber;
 	int deskewingRoundToNanoSecs;
 	bool localizing;
+	bool mappingOnThisComputer;
 
 	NodeParameters(rclcpp::Node& node);
 };

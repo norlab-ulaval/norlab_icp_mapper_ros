@@ -30,6 +30,7 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<int>("expected_unique_deskewing_TF_number", 4000);
     node.declare_parameter<int>("deskewing_round_to_nanosecs", 50000);
     node.declare_parameter<bool>("localizing", true);
+    node.declare_parameter<bool>("mappingOnThisComputer", true);
 }
 
 void NodeParameters::retrieveParameters(rclcpp::Node& node)
@@ -53,6 +54,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
 	node.get_parameter("expected_unique_deskewing_TF_number", expectedUniqueDeskewingTFNumber);
 	node.get_parameter("deskewing_round_to_nanosecs", deskewingRoundToNanoSecs);
 	node.get_parameter("localizing", localizing);
+	node.get_parameter("mappingOnThisComputer", mappingOnThisComputer);
 }
 
 void NodeParameters::validateParameters() const
@@ -114,7 +116,7 @@ void NodeParameters::validateParameters() const
 		}
 	}
 
-	if(!isMapping && initialMapFileName.empty())
+	if(!mappingOnThisComputer && !isMapping && initialMapFileName.empty())
 	{
 		throw std::runtime_error("is mapping is set to false, but initial map file name was not specified.");
 	}

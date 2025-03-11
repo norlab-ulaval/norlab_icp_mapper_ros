@@ -264,89 +264,97 @@ private:
                 }
             }
 
-
-            PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
-            PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
-            if(hasToSetRobotPose)
+            if (params->mappingOnThisComputer)
             {
-                PM::TransformationParameters sensorToRobot = findTransform(sensorFrame, params->robotFrame, timeStamp, input.getHomogeneousDim());
-                sensorToMapBeforeUpdate = robotPoseToSet * sensorToRobot;
-                hasToSetRobotPose = false;
-            }
-            try
-            {
-                std::chrono::steady_clock::time_point mappingStartTime = std::chrono::steady_clock::now();
-                mapper->processInput(input, sensorToMapBeforeUpdate,
-                                     std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
-                std::chrono::steady_clock::time_point mappingEndTime = std::chrono::steady_clock::now();
-                RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapper call executed in: " << std::chrono::duration_cast<std::chrono::milliseconds>(mappingEndTime - mappingStartTime).count() << " [ms]");
-            }
-            catch (const PM::ConvergenceError& convergenceError)
-            {
-                RCLCPP_ERROR(this->get_logger(), "Unable to process input: %s", convergenceError.what());
+                PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
+                PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
+                if(hasToSetRobotPose)
+                {
+                    PM::TransformationParameters sensorToRobot = findTransform(sensorFrame, params->robotFrame, timeStamp, input.getHomogeneousDim());
+                    sensorToMapBeforeUpdate = robotPoseToSet * sensorToRobot;
+                    hasToSetRobotPose = false;
+                }
                 try
                 {
-                    saveTrajectory(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error"));
-                    saveMap(appendToFilePath(params->finalMapFileName, "_convergence_error"));
+                    std::chrono::steady_clock::time_point mappingStartTime = std::chrono::steady_clock::now();
+                    mapper->processInput(input, sensorToMapBeforeUpdate,
+                                        std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
+                    std::chrono::steady_clock::time_point mappingEndTime = std::chrono::steady_clock::now();
+                    RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapper call executed in: " << std::chrono::duration_cast<std::chrono::milliseconds>(mappingEndTime - mappingStartTime).count() << " [ms]");
                 }
-                catch(const std::runtime_error& runtimeError)
+                catch (const PM::ConvergenceError& convergenceError)
                 {
-                    RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", runtimeError.what());
+                    RCLCPP_ERROR(this->get_logger(), "Unable to process input: %s", convergenceError.what());
+                    try
+                    {
+                        saveTrajectory(appendToFilePath(params->finalTrajectoryFileName, "_convergence_error"));
+                        saveMap(appendToFilePath(params->finalMapFileName, "_convergence_error"));
+                    }
+                    catch(const std::runtime_error& runtimeError)
+                    {
+                        RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", runtimeError.what());
+                    }
+                    throw;
                 }
-                throw;
+                const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
+
+                PM::TransformationParameters currentOdomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
+                mapTfLock.lock();
+                odomToMap = currentOdomToMap;
+                mapTfLock.unlock();
+
+                PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
+                PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
+
+                robotTrajectory->addPose(robotToMap, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
+                nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, "map", params->robotFrame, timeStamp);
+
+                if(previousTimeStamp.nanoseconds() != 0)
+                {
+                    Eigen::Vector3f linearDisplacement = robotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
+                    float deltaTime = (float) (timeStamp - previousTimeStamp).seconds();
+                    Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
+                    odomMsgOut.twist.twist.linear.x = linearVelocity(0);
+                    odomMsgOut.twist.twist.linear.y = linearVelocity(1);
+                    odomMsgOut.twist.twist.linear.z = linearVelocity(2);
+                }
+                previousTimeStamp = timeStamp;
+                previousRobotToMap = robotToMap;
+
+                odomPublisher->publish(odomMsgOut);
+
+                if(!params->publishTfsBetweenRegistrations)
+                {
+                    geometry_msgs::msg::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map", params->odomFrame, timeStamp);
+                    tfBroadcaster->sendTransform(currentOdomToMapTf);
+                }
+
+                idleTimeLock.lock();
+                lastTimeInputWasProcessed = std::chrono::steady_clock::now();
+                idleTimeLock.unlock();
             }
-            const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
-
-            PM::TransformationParameters currentOdomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
-            mapTfLock.lock();
-            odomToMap = currentOdomToMap;
-            mapTfLock.unlock();
-
-            PM::TransformationParameters robotToSensor = findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
-            PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
-
-            robotTrajectory->addPose(robotToMap, std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
-            nav_msgs::msg::Odometry odomMsgOut = PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(robotToMap, "map", params->robotFrame, timeStamp);
-
-            if(previousTimeStamp.nanoseconds() != 0)
-            {
-                Eigen::Vector3f linearDisplacement = robotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
-                float deltaTime = (float) (timeStamp - previousTimeStamp).seconds();
-                Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
-                odomMsgOut.twist.twist.linear.x = linearVelocity(0);
-                odomMsgOut.twist.twist.linear.y = linearVelocity(1);
-                odomMsgOut.twist.twist.linear.z = linearVelocity(2);
-            }
-            previousTimeStamp = timeStamp;
-            previousRobotToMap = robotToMap;
-
-            odomPublisher->publish(odomMsgOut);
-
-            if(!params->publishTfsBetweenRegistrations)
-            {
-                geometry_msgs::msg::TransformStamped currentOdomToMapTf = PointMatcher_ROS::pointMatcherTransformationToRosTf<float>(currentOdomToMap, "map", params->odomFrame, timeStamp);
-                tfBroadcaster->sendTransform(currentOdomToMapTf);
-            }
-
-            idleTimeLock.lock();
-            lastTimeInputWasProcessed = std::chrono::steady_clock::now();
-            idleTimeLock.unlock();
         }
         catch(const tf2::TransformException& ex)
         {
             RCLCPP_WARN(this->get_logger(), "%s", ex.what());
         }
-
-        std::chrono::steady_clock::time_point processingEndTime = std::chrono::steady_clock::now();
-        RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapping finished in " << std::chrono::duration_cast<std::chrono::milliseconds>(processingEndTime - processingStartTime).count() << " [ms]");
-
+        if (params->mappingOnThisComputer)
+        {
+            std::chrono::steady_clock::time_point processingEndTime = std::chrono::steady_clock::now();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Filtering and deskewing finished in " << std::chrono::duration_cast<std::chrono::milliseconds>(processingEndTime - processingStartTime).count() << " [ms]");
+        }
+        else
+        {
+            std::chrono::steady_clock::time_point processingEndTime = std::chrono::steady_clock::now();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapping finished in " << std::chrono::duration_cast<std::chrono::milliseconds>(processingEndTime - processingStartTime).count() << " [ms]");
+        }
     }
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
     {
         RCLCPP_DEBUG(this->get_logger(), "----POINT CLOUD RECEIVED----");
         isLocalizingLock.lock();
-        if(isLocalizing)
+        if(isLocalizing || !params->mappingOnThisComputer)
         {
             std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
             auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn);
@@ -361,7 +369,7 @@ private:
     {
         RCLCPP_DEBUG(this->get_logger(), "----LASER SCAN RECEIVED----");
         isLocalizingLock.lock();
-        if(isLocalizing)
+        if(isLocalizing || !params->mappingOnThisComputer)
         {
             std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
             auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn);

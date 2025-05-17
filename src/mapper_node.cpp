@@ -36,7 +36,7 @@ public:
                                                                                           params->beamHalfAngle, params->epsilonA, params->epsilonD, params->alpha,
                                                                                           params->beta, params->is3D, params->computeProbDynamic,
                                                                                           params->isMapping, params->saveMapCellsOnHardDrive, params->imuToLidar,
-                                                                                          params->reconstructContinuousTrajectory));
+                                                                                          params->reconstructContinuousTrajectory, params->linearVelocityNoise));
 
         if(!params->initialMapFileName.empty())
         {
@@ -324,7 +324,11 @@ private:
                 {
                     cloudImuMeasurements.push_back({std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(rclcpp::Time(it->header.stamp).nanoseconds())),
                                                     Eigen::Matrix<float, 3, 1>(it->angular_velocity.x, it->angular_velocity.y, it->angular_velocity.z),
-                                                    Eigen::Matrix<float, 3, 1>(it->linear_acceleration.x, it->linear_acceleration.y, it->linear_acceleration.z)});
+                                                    Eigen::Matrix<float, 3, 1>(it->linear_acceleration.x, it->linear_acceleration.y, it->linear_acceleration.z),
+                                                    (Eigen::Matrix<float, 3, 3>()
+                                                            << it->angular_velocity_covariance[0], it->angular_velocity_covariance[1], it->angular_velocity_covariance[2],
+                                                            it->angular_velocity_covariance[3], it->angular_velocity_covariance[4], it->angular_velocity_covariance[5],
+                                                            it->angular_velocity_covariance[6], it->angular_velocity_covariance[7], it->angular_velocity_covariance[8]).finished()});
                 }
             }
             imuMeasurementsLock.unlock();

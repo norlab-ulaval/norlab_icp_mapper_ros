@@ -42,6 +42,7 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<bool>("publish_tfs_between_registrations", true);
     node.declare_parameter<std::string>("imu_to_lidar", "");
     node.declare_parameter<bool>("reconstruct_continuous_trajectory", false);
+    node.declare_parameter<float>("linear_velocity_noise", 1.0);
 }
 
 void NodeParameters::retrieveParameters(rclcpp::Node& node)
@@ -77,6 +78,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     node.get_parameter("publish_tfs_between_registrations", publishTfsBetweenRegistrations);
     node.get_parameter("imu_to_lidar", imuToLidarString);
     node.get_parameter("reconstruct_continuous_trajectory", reconstructContinuousTrajectory);
+    node.get_parameter("linear_velocity_noise", linearVelocityNoise);
 }
 
 void NodeParameters::validateParameters() const

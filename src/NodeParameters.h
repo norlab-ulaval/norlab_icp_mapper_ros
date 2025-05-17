@@ -50,6 +50,7 @@ public:
     std::string imuToLidarString;
     PM::TransformationParameters imuToLidar;
     bool reconstructContinuousTrajectory;
+    float linearVelocityNoise;
 
     NodeParameters(rclcpp::Node& node);
 };

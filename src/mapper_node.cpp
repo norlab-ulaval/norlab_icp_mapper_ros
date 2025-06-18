@@ -171,7 +171,6 @@ private:
 
 
     std::unique_ptr<Deskewer> deskewer;
-    std::unique_ptr<Deskewer> deskewer;
 
     std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
     {

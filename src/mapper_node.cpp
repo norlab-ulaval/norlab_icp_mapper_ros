@@ -169,7 +169,6 @@ private:
     bool isLocalizing;
     std::mutex isLocalizingLock;
 
-
     std::unique_ptr<Deskewer> deskewer;
 
     std::string appendToFilePath(const std::string& filePath, const std::string& suffix)

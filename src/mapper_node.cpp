@@ -416,7 +416,7 @@ private:
         PM::DataPoints newMap;
         while(rclcpp::ok())
         {
-            if(mapper->getNewLocalMap(newMap))
+            if(mapper->getNewLocalMap(newMap) && mapPublisher->get_subscription_count() > 0)
             {
                 if (params->compressionVoxelSize > 0)
                 {

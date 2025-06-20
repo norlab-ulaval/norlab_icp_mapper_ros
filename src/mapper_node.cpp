@@ -130,9 +130,8 @@ public:
         isLocalizingLock.unlock();
 
         // Initialize parameter callback handle
-        paramSubscriber = std::make_shared<rclcpp::ParameterEventHandler>(this);
-        paramCallbackHandle = paramSubscriber->add_parameter_callback( // TODO find a way to move this to NodeParameters.cpp
-            "compression_voxel_size", std::bind(&MapperNode::updateCompressionVoxelSize, this, std::placeholders::_1));
+        paramCallbackHandle = this->get_node_parameters_interface()->add_on_set_parameters_callback(
+            std::bind(&MapperNode::updateCompressionVoxelSize, this, std::placeholders::_1));
 
     }
 
@@ -173,8 +172,7 @@ private:
     std::thread mapPublisherThread;
     std::thread mapTfPublisherThread;
 
-    std::shared_ptr<rclcpp::ParameterEventHandler> paramSubscriber;
-    std::shared_ptr<rclcpp::ParameterCallbackHandle> paramCallbackHandle;
+    std::shared_ptr<rclcpp::node_interfaces::OnSetParametersCallbackHandle> paramCallbackHandle;
 
     bool isLocalizing;
     std::mutex isLocalizingLock;
@@ -539,22 +537,33 @@ private:
         }
     }
 
-    void updateCompressionVoxelSize(const rclcpp::Parameter& param)
+    rcl_interfaces::msg::SetParametersResult updateCompressionVoxelSize(const std::vector<rclcpp::Parameter>& updatedParams)
     {
-        if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE)
-        {
-            double voxelSize = param.as_double();
+        rcl_interfaces::msg::SetParametersResult result;
 
-            if (voxelSize < 0)
+        for (const auto& param : updatedParams)
+        {
+            // TODO find a way to move this to NodeParameters.cpp or sync the param name across files
+            if (param.get_name() == "compression_voxel_size" && param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE)
             {
-                RCLCPP_WARN_STREAM(this->get_logger(), "Invalid voxel size. Must be non-negative: " << voxelSize);
-            }
-            else
-            {
-                RCLCPP_DEBUG_STREAM(this->get_logger(), "Setting voxel size to: " << voxelSize);
-                params->compressionVoxelSize = voxelSize;
+                double voxelSize = param.as_double();
+
+                if (voxelSize < 0)
+                {
+                    RCLCPP_WARN_STREAM(this->get_logger(), "Invalid voxel size. Must be non-negative: " << voxelSize);
+                    result.successful = false;
+                    result.reason = "Invalid voxel size. Must be non-negative.";
+                }
+                else
+                {
+                    RCLCPP_DEBUG_STREAM(this->get_logger(), "Setting voxel size to: " << voxelSize);
+                    params->compressionVoxelSize = voxelSize;
+                    result.successful = true;
+                    result.reason = "Voxel size updated successfully.";
+                }
             }
         }
+        return result;
     }
 
 };

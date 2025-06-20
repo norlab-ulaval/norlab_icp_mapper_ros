@@ -561,6 +561,7 @@ private:
     rcl_interfaces::msg::SetParametersResult updateCompressionVoxelSize(const std::vector<rclcpp::Parameter>& updatedParams)
     {
         rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
 
         for (const auto& param : updatedParams)
         {
@@ -587,7 +588,6 @@ private:
           						{"maxSizeByNode", PointMatcherSupport::toParam(params->compressionVoxelSize)}
            					}
                         );
-                    result.successful = true;
                     result.reason = "Voxel size updated successfully.";
                 }
             }

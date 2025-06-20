@@ -27,6 +27,14 @@ Check the [mapper's documentation](https://norlab-icp-mapper.readthedocs.io/en/l
 | expected_unique_deskewing_TF_number |                    How much memory should we reserve for the per-point transformations.                     |       A positive integer       |                            4000                            |
 |     deskewing_round_to_nanosecs     |           How much should each point's timestamp be rounded for deskewing transformation search.            |       A positive integer       |                           50000                            |
 
+## Dynamic Node Parameters
+
+These parameters can be changed at runtime using the ROS parameter server.
+
+|          Name          |                                     Description                                      |    Possible values    | Default Value |
+| :--------------------: | :----------------------------------------------------------------------------------: | :-------------------: | :-----------: |
+| compression_voxel_size | Size of a voxel in the octree tree of the output map point cloud message. 0=disabled | A non-negative double |      0.5      |
+
 ## Node Topics
 
 |           Name           |                            Description                             |

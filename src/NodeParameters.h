@@ -37,7 +37,7 @@ public:
 	int deskewingRoundToNanoSecs;
 	bool localizing;
 
-	float compressionVoxelSize;
+	double compressionVoxelSize;
 
 	NodeParameters(rclcpp::Node& node);
 };

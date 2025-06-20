@@ -133,6 +133,15 @@ public:
         paramCallbackHandle = this->get_node_parameters_interface()->add_on_set_parameters_callback(
             std::bind(&MapperNode::updateCompressionVoxelSize, this, std::placeholders::_1));
 
+        // Initial map voxel subsampling
+        voxel_filter =
+            PM::get().DataPointsFilterRegistrar.create(
+				"OctreeGridDataPointsFilter",
+				{
+				{"maxSizeByNode", PointMatcherSupport::toParam(params->compressionVoxelSize)}
+				}
+            );
+
     }
 
 private:
@@ -173,6 +182,8 @@ private:
     std::thread mapTfPublisherThread;
 
     std::shared_ptr<rclcpp::node_interfaces::OnSetParametersCallbackHandle> paramCallbackHandle;
+
+    std::shared_ptr<PM::DataPointsFilter> voxel_filter;
 
     bool isLocalizing;
     std::mutex isLocalizingLock;
@@ -407,6 +418,16 @@ private:
         {
             if(mapper->getNewLocalMap(newMap))
             {
+                if (params->compressionVoxelSize > 0)
+                {
+                    int origNumPoints = newMap.getNbPoints();
+                    std::chrono::steady_clock::time_point mapMessageSubsamplingStartTime = std::chrono::steady_clock::now();
+                    voxel_filter->inPlaceFilter(newMap);
+                    std::chrono::steady_clock::time_point mapMessageSubsamplingEndTime = std::chrono::steady_clock::now();
+                    RCLCPP_DEBUG_STREAM(this->get_logger(), "Output map subsampled to: " << 100.0*(newMap.getNbPoints() / (double) origNumPoints)
+                        << " % in " << std::chrono::duration_cast<std::chrono::milliseconds>(mapMessageSubsamplingEndTime - mapMessageSubsamplingStartTime).count() << " [ms]");
+                }
+
                 sensor_msgs::msg::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(newMap, "map", this->get_clock()->now());
                 mapPublisher->publish(mapMsgOut);
             }
@@ -558,6 +579,14 @@ private:
                 {
                     RCLCPP_DEBUG_STREAM(this->get_logger(), "Setting voxel size to: " << voxelSize);
                     params->compressionVoxelSize = voxelSize;
+
+                    voxel_filter =
+                        PM::get().DataPointsFilterRegistrar.create(
+           					"OctreeGridDataPointsFilter",
+           					{
+          						{"maxSizeByNode", PointMatcherSupport::toParam(params->compressionVoxelSize)}
+           					}
+                        );
                     result.successful = true;
                     result.reason = "Voxel size updated successfully.";
                 }

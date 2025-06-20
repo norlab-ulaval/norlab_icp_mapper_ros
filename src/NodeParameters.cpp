@@ -134,9 +134,9 @@ void NodeParameters::validateParameters() const
             }
 	}
 
-	if (compressionVoxelSize <= 0)
+	if (compressionVoxelSize < 0)
 	{
-		throw std::runtime_error("Compression voxel size must be positive: " + std::to_string(compressionVoxelSize));
+		throw std::runtime_error("Compression voxel size must be non-negative: " + std::to_string(compressionVoxelSize));
 	}
 
 }

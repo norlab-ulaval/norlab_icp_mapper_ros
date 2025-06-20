@@ -14,6 +14,7 @@
 #include <mutex>
 #include <thread>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+#include <pointmatcher/PointMatcher.h>
 
 class MapperNode : public rclcpp::Node
 {
@@ -127,6 +128,12 @@ public:
             isLocalizing = true;
         }
         isLocalizingLock.unlock();
+
+        // Initialize parameter callback handle
+        paramSubscriber = std::make_shared<rclcpp::ParameterEventHandler>(this);
+        paramCallbackHandle = paramSubscriber->add_parameter_callback( // TODO find a way to move this to NodeParameters.cpp
+            "compression_voxel_size", std::bind(&MapperNode::updateCompressionVoxelSize, this, std::placeholders::_1));
+
     }
 
 private:
@@ -165,6 +172,9 @@ private:
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr disableLocalizationService;
     std::thread mapPublisherThread;
     std::thread mapTfPublisherThread;
+
+    std::shared_ptr<rclcpp::ParameterEventHandler> paramSubscriber;
+    std::shared_ptr<rclcpp::ParameterCallbackHandle> paramCallbackHandle;
 
     bool isLocalizing;
     std::mutex isLocalizingLock;
@@ -528,6 +538,25 @@ private:
             setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(poseMsgIn.pose.pose, homogeneousDim));
         }
     }
+
+    void updateCompressionVoxelSize(const rclcpp::Parameter& param)
+    {
+        if (param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE)
+        {
+            double voxelSize = param.as_double();
+
+            if (voxelSize < 0)
+            {
+                RCLCPP_WARN_STREAM(this->get_logger(), "Invalid voxel size. Must be non-negative: " << voxelSize);
+            }
+            else
+            {
+                RCLCPP_DEBUG_STREAM(this->get_logger(), "Setting voxel size to: " << voxelSize);
+                params->compressionVoxelSize = voxelSize;
+            }
+        }
+    }
+
 };
 
 int main(int argc, char** argv)

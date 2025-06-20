@@ -134,7 +134,7 @@ public:
             std::bind(&MapperNode::updateCompressionVoxelSize, this, std::placeholders::_1));
 
         // Initial map voxel subsampling
-        voxel_filter =
+        outputMapSubsamplingFilter =
             PM::get().DataPointsFilterRegistrar.create(
 				"OctreeGridDataPointsFilter",
 				{
@@ -183,7 +183,7 @@ private:
 
     std::shared_ptr<rclcpp::node_interfaces::OnSetParametersCallbackHandle> paramCallbackHandle;
 
-    std::shared_ptr<PM::DataPointsFilter> voxel_filter;
+    std::shared_ptr<PM::DataPointsFilter> outputMapSubsamplingFilter;
 
     bool isLocalizing;
     std::mutex isLocalizingLock;
@@ -422,7 +422,7 @@ private:
                 {
                     int origNumPoints = newMap.getNbPoints();
                     std::chrono::steady_clock::time_point mapMessageSubsamplingStartTime = std::chrono::steady_clock::now();
-                    voxel_filter->inPlaceFilter(newMap);
+                    outputMapSubsamplingFilter->inPlaceFilter(newMap);
                     std::chrono::steady_clock::time_point mapMessageSubsamplingEndTime = std::chrono::steady_clock::now();
                     RCLCPP_DEBUG_STREAM(this->get_logger(), "Output map subsampled to: " << 100.0*(newMap.getNbPoints() / (double) origNumPoints)
                         << " % in " << std::chrono::duration_cast<std::chrono::milliseconds>(mapMessageSubsamplingEndTime - mapMessageSubsamplingStartTime).count() << " [ms]");
@@ -580,7 +580,7 @@ private:
                     RCLCPP_DEBUG_STREAM(this->get_logger(), "Setting voxel size to: " << voxelSize);
                     params->compressionVoxelSize = voxelSize;
 
-                    voxel_filter =
+                    outputMapSubsamplingFilter =
                         PM::get().DataPointsFilterRegistrar.create(
            					"OctreeGridDataPointsFilter",
            					{

@@ -1,5 +1,6 @@
 import os
 from launch import LaunchDescription
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from ament_index_python.packages import get_package_share_directory
@@ -29,7 +30,7 @@ def generate_launch_description():
                 ],
                 parameters=[
                     {
-                        "use_sim_time": True,
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
                         "odom_frame": "odom",
                         "robot_frame": "base_link",
                         "mapping_config": os.path.join(
@@ -49,11 +50,12 @@ def generate_launch_description():
                         "is_3D": True,
                         "save_map_cells_on_hard_drive": True,
                         "publish_tfs_between_registrations": True,
+                        "deskew": False,
                         "compression_voxel_size": 0.2,
                     }
                 ],
                 remappings=[
-                    ("points_in", "lslidar_point_cloud"),
+                    ("points_in", "rslidar32_points"),
                 ],
             ),
         ]

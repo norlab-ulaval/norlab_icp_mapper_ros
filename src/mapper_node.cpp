@@ -1,17 +1,19 @@
+#include "Deskewer.h"
 #include "NodeParameters.h"
+#include <chrono>
+#include <cstdint>
 #include <rclcpp/rclcpp.hpp>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
 #include <norlab_icp_mapper/Trajectory.h>
 #include <norlab_icp_mapper_ros/srv/save_map.hpp>
 #include <norlab_icp_mapper_ros/srv/load_map.hpp>
 #include <norlab_icp_mapper_ros/srv/save_trajectory.hpp>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <std_srvs/srv/empty.hpp>
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 
 class MapperNode : public rclcpp::Node
 {
@@ -26,6 +28,8 @@ public:
         mapper = std::make_unique<norlab_icp_mapper::Mapper>(params->mappingConfig, params->is3D, params->isOnline,
                                                params->isMapping, params->saveMapCellsOnHardDrive);
 
+        deskewer = std::make_unique<Deskewer>(this->get_logger(), this->get_clock(), params->expectedUniqueDeskewingTFNumber, params->deskewingRoundToNanoSecs);
+
         if(!params->initialMapFileName.empty())
         {
             loadMap(params->initialMapFileName);
@@ -33,6 +37,10 @@ public:
         if(!params->initialRobotPoseString.empty())
         {
             setRobotPose(params->initialRobotPose);
+        }
+        else
+        {
+            hasToSetRobotPose = false;
         }
 
         int messageQueueSize;
@@ -52,25 +60,17 @@ public:
         tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster(*this));
 
         mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", 2);
+        inputFiltersScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_input_filters", 1);
+        deskewingScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_deskew", 1);
         odomPublisher = this->create_publisher<nav_msgs::msg::Odometry>("icp_odom", 50);
 
         if(params->is3D)
         {
             robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
             odomToMap = PM::Matrix::Identity(4, 4);
-            if(params->color3Dpoints)
-            {
-                coloredpointsSubscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("colorlidarpoints", messageQueueSize,
-                                                                                               std::bind(&MapperNode::coloredpointsCallback, this,
-                                                                                                         std::placeholders::_1));
-            }
-            else
-            {
-                pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", messageQueueSize,
+            pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", messageQueueSize,
                                                                                                std::bind(&MapperNode::pointCloud2Callback, this,
                                                                                                          std::placeholders::_1));
-            }
-
         }
         else
         {
@@ -80,6 +80,10 @@ public:
                                                                                                std::bind(&MapperNode::laserScanCallback, this,
                                                                                                          std::placeholders::_1));
         }
+
+        relocalizePoseSubscription = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("pose_in", messageQueueSize,
+                                                                                               std::bind(&MapperNode::relocalizePoseCallback, this,
+                                                                                                         std::placeholders::_1));
 
         reloadYamlConfigService = this->create_service<std_srvs::srv::Empty>("reload_yaml_config",
                                                                              std::bind(&MapperNode::reloadYamlConfigCallback, this, std::placeholders::_1,
@@ -99,12 +103,30 @@ public:
         disableMappingService = this->create_service<std_srvs::srv::Empty>("disable_mapping",
                                                                            std::bind(&MapperNode::disableMappingCallback, this, std::placeholders::_1,
                                                                                      std::placeholders::_2));
-
+        enableLocalizationService = this->create_service<std_srvs::srv::Empty>("enable_loc",
+                                                                          std::bind(&MapperNode::enableLocCallback, this, std::placeholders::_1,
+                                                                                    std::placeholders::_2));
+        disableLocalizationService = this->create_service<std_srvs::srv::Empty>("disable_loc",
+                                                                           std::bind(&MapperNode::disableLocCallback, this, std::placeholders::_1,
+                                                                                     std::placeholders::_2));
         mapPublisherThread = std::thread(&MapperNode::mapPublisherLoop, this);
         if(params->publishTfsBetweenRegistrations)
         {
             mapTfPublisherThread = std::thread(&MapperNode::mapTfPublisherLoop, this);
         }
+
+        // Ensure proper localization and mapping states.
+        isLocalizingLock.lock();
+        isLocalizing = params->localizing;
+        if(!isLocalizing)
+        {
+    	    mapper->setIsMapping(false);
+        }
+        if(mapper->getIsMapping())
+        {
+            isLocalizing = true;
+        }
+        isLocalizingLock.unlock();
     }
 
 private:
@@ -114,7 +136,7 @@ private:
     std::shared_ptr<PM::Transformation> transformation;
     std::unique_ptr<norlab_icp_mapper::Mapper> mapper;
     PM::TransformationParameters robotPoseToSet;
-    bool hasToSetRobotPose;
+    bool hasToSetRobotPose = false;
     std::thread mapperShutdownThread;
     std::mutex idleTimeLock;
     std::chrono::time_point<std::chrono::steady_clock> lastTimeInputWasProcessed;
@@ -125,10 +147,12 @@ private:
     std::mutex mapTfLock;
     PM::TransformationParameters odomToMap;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr mapPublisher;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr inputFiltersScanPublisher;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr deskewingScanPublisher;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr coloredpointsSubscription;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
+    rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr relocalizePoseSubscription;
     PM::TransformationParameters previousRobotToMap;
     rclcpp::Time previousTimeStamp;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reloadYamlConfigService;
@@ -137,8 +161,15 @@ private:
     rclcpp::Service<norlab_icp_mapper_ros::srv::SaveTrajectory>::SharedPtr saveTrajectoryService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr enableMappingService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr disableMappingService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr enableLocalizationService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr disableLocalizationService;
     std::thread mapPublisherThread;
     std::thread mapTfPublisherThread;
+
+    bool isLocalizing;
+    std::mutex isLocalizingLock;
+
+    std::unique_ptr<Deskewer> deskewer;
 
     std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
     {
@@ -163,6 +194,24 @@ private:
         if(map.getEuclideanDim() != euclideanDim)
         {
             throw std::runtime_error("Invalid map dimension");
+        }
+
+        //----------------------------------------------------------------------------------------------------
+
+        if(!mapHasColor(map))
+        {
+            RCLCPP_INFO(this->get_logger(),  "Creating field color on map");
+            Eigen::MatrixXd colorMatrix(4, map.getNbPoints()); 
+            colorMatrix.setZero(); 
+            colorMatrix.row(2).setOnes();
+            colorMatrix.row(3).setOnes();
+
+            Eigen::MatrixXf colorMatrixF = colorMatrix.cast<float>();
+
+            map.addDescriptor("color", colorMatrixF);
+            RCLCPP_INFO(this->get_logger(),  "Field color created");
+
+
         }
         mapper->setMap(map);
     }
@@ -210,13 +259,32 @@ private:
         return PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(tf, transformDimension);
     }
 
-    void gotInput(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    void gotInput(PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& cloudStamp)
     {
+        rclcpp::Time timeStamp = cloudStamp;
+        std::chrono::steady_clock::time_point processingStartTime = std::chrono::steady_clock::now();
         try
         {
+            mapper->applyInputFilters(input);
+            std::chrono::steady_clock::time_point filterEndTime = std::chrono::steady_clock::now();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Applied input filters in " << std::chrono::duration_cast<std::chrono::milliseconds>(filterEndTime - processingStartTime).count() << " [ms]");
+            publishAfterInputFilters(input, sensorFrame, cloudStamp);
+
+            if (params->deskew)
+            {
+                bool deskewSuccessuful = deskewer->deskewCloud(input, sensorFrame);
+
+                // if deskewing was successful, update the cloud timestamp to match the last point in the cloud
+                if (deskewSuccessuful)
+                {
+                    publishAfterDeskew(input, sensorFrame, cloudStamp);
+                    timeStamp = rclcpp::Time(input.times(input.getNbPoints() - 1), timeStamp.get_clock_type());
+                }
+            }
+
+
             PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
             PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
-
             if(hasToSetRobotPose)
             {
                 PM::TransformationParameters sensorToRobot = findTransform(sensorFrame, params->robotFrame, timeStamp, input.getHomogeneousDim());
@@ -225,8 +293,11 @@ private:
             }
             try
             {
+                std::chrono::steady_clock::time_point mappingStartTime = std::chrono::steady_clock::now();
                 mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
+                std::chrono::steady_clock::time_point mappingEndTime = std::chrono::steady_clock::now();
+                RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapper call executed in: " << std::chrono::duration_cast<std::chrono::milliseconds>(mappingEndTime - mappingStartTime).count() << " [ms]");
             }
             catch (const PM::ConvergenceError& convergenceError)
             {
@@ -283,21 +354,58 @@ private:
         {
             RCLCPP_WARN(this->get_logger(), "%s", ex.what());
         }
-    }
 
-    void coloredpointsCallback(const sensor_msgs::msg::PointCloud2& coloredcloudMsgIn)
-    {
-        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(coloredcloudMsgIn), coloredcloudMsgIn.header.frame_id, coloredcloudMsgIn.header.stamp);
+        std::chrono::steady_clock::time_point processingEndTime = std::chrono::steady_clock::now();
+        RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapping finished in " << std::chrono::duration_cast<std::chrono::milliseconds>(processingEndTime - processingStartTime).count() << " [ms]");
+
     }
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
     {
-        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn), cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+        RCLCPP_DEBUG(this->get_logger(), "----POINT CLOUD RECEIVED----");
+        isLocalizingLock.lock();
+        if(isLocalizing)
+        {
+            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+            auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn);
+            std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
+            gotInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+        }
+        isLocalizingLock.unlock();
     }
 
     void laserScanCallback(const sensor_msgs::msg::LaserScan& scanMsgIn)
     {
-        gotInput(PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn), scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+        RCLCPP_DEBUG(this->get_logger(), "----LASER SCAN RECEIVED----");
+        isLocalizingLock.lock();
+        if(isLocalizing)
+        {
+            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+            auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn);
+            std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
+            gotInput(input, scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+        }
+        isLocalizingLock.unlock();
+    }
+
+    void publishAfterInputFilters(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    {
+        if (inputFiltersScanPublisher->get_subscription_count() > 0)
+        {
+            sensor_msgs::msg::PointCloud2 filteredInputMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(input, sensorFrame, timeStamp);
+            inputFiltersScanPublisher->publish(filteredInputMsgOut);
+        }
+    }
+
+    void publishAfterDeskew(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)
+    {
+        if (deskewingScanPublisher->get_subscription_count() > 0)
+        {
+            sensor_msgs::msg::PointCloud2 deskewedCloudMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(input, sensorFrame, timeStamp);
+            deskewingScanPublisher->publish(deskewedCloudMsgOut);
+        }
     }
 
     void mapPublisherLoop()
@@ -360,6 +468,19 @@ private:
     	}
     }
 
+    bool mapHasColor(PM::DataPoints  pmCloud)
+    {
+        for(auto it(pmCloud.descriptorLabels.begin()); it != pmCloud.descriptorLabels.end(); ++it)
+        {        
+            if(it->text == "color")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }   
+
     void loadMapCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::LoadMap::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::LoadMap::Response> res)
     {
     	try
@@ -368,6 +489,8 @@ private:
             int homogeneousDim = params->is3D ? 4 : 3;
             setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(req->pose, homogeneousDim));
     		robotTrajectory->clear();
+
+
     	}
     	catch(const std::runtime_error& e)
     	{
@@ -390,6 +513,12 @@ private:
     void enableMappingCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
     	RCLCPP_INFO(this->get_logger(), "Enabling mapping");
+        isLocalizingLock.lock();
+        if(!isLocalizing)
+        {
+            isLocalizing = true;
+        }
+        isLocalizingLock.unlock();
     	mapper->setIsMapping(true);
     }
 
@@ -397,6 +526,40 @@ private:
     {
         RCLCPP_INFO(this->get_logger(), "Disabling mapping");
     	mapper->setIsMapping(false);
+    }
+
+    void enableLocCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    {
+    	RCLCPP_INFO(this->get_logger(), "Enabling localization");
+        isLocalizingLock.lock();
+    	isLocalizing = true;
+        isLocalizingLock.unlock();
+    }
+
+    void disableLocCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    {
+        RCLCPP_INFO(this->get_logger(), "Disabling localization");
+        if(mapper->getIsMapping())
+        {
+    	    mapper->setIsMapping(false);
+        }
+        isLocalizingLock.lock();
+        isLocalizing = false;
+        isLocalizingLock.unlock();
+    }
+
+    void relocalizePoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped& poseMsgIn)
+    {
+        if (mapper->getIsMapping())
+        {
+            RCLCPP_WARN(this->get_logger(), "Can not relocalize the robot if mapping is active.");
+        }
+        else
+        {
+            RCLCPP_INFO(this->get_logger(), "Using 2D pose estimate given.");
+            int homogeneousDim = params->is3D ? 4 : 3;
+            setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(poseMsgIn.pose.pose, homogeneousDim));
+        }
     }
 };
 

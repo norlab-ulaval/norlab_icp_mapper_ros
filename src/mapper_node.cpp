@@ -14,6 +14,7 @@
 #include <mutex>
 #include <thread>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+#include <pointmatcher/PointMatcher.h>
 
 class MapperNode : public rclcpp::Node
 {
@@ -127,6 +128,20 @@ public:
             isLocalizing = true;
         }
         isLocalizingLock.unlock();
+
+        // Initialize parameter callback handle
+        paramCallbackHandle = this->get_node_parameters_interface()->add_on_set_parameters_callback(
+            std::bind(&MapperNode::updateCompressionVoxelSize, this, std::placeholders::_1));
+
+        // Initial map voxel subsampling
+        outputMapSubsamplingFilter =
+            PM::get().DataPointsFilterRegistrar.create(
+				"OctreeGridDataPointsFilter",
+				{
+				{"maxSizeByNode", PointMatcherSupport::toParam(params->compressionVoxelSize)}
+				}
+            );
+
     }
 
 private:
@@ -165,6 +180,10 @@ private:
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr disableLocalizationService;
     std::thread mapPublisherThread;
     std::thread mapTfPublisherThread;
+
+    std::shared_ptr<rclcpp::node_interfaces::OnSetParametersCallbackHandle> paramCallbackHandle;
+
+    std::shared_ptr<PM::DataPointsFilter> outputMapSubsamplingFilter;
 
     bool isLocalizing;
     std::mutex isLocalizingLock;
@@ -397,8 +416,18 @@ private:
         PM::DataPoints newMap;
         while(rclcpp::ok())
         {
-            if(mapper->getNewLocalMap(newMap))
+            if(mapper->getNewLocalMap(newMap) && mapPublisher->get_subscription_count() > 0)
             {
+                if (params->compressionVoxelSize > 0)
+                {
+                    int origNumPoints = newMap.getNbPoints();
+                    std::chrono::steady_clock::time_point mapMessageSubsamplingStartTime = std::chrono::steady_clock::now();
+                    outputMapSubsamplingFilter->inPlaceFilter(newMap);
+                    std::chrono::steady_clock::time_point mapMessageSubsamplingEndTime = std::chrono::steady_clock::now();
+                    RCLCPP_DEBUG_STREAM(this->get_logger(), "Output map subsampled to: " << 100.0*(newMap.getNbPoints() / (double) origNumPoints)
+                        << " % in " << std::chrono::duration_cast<std::chrono::milliseconds>(mapMessageSubsamplingEndTime - mapMessageSubsamplingStartTime).count() << " [ms]");
+                }
+
                 sensor_msgs::msg::PointCloud2 mapMsgOut = PointMatcher_ROS::pointMatcherCloudToRosMsg<float>(newMap, "map", this->get_clock()->now());
                 mapPublisher->publish(mapMsgOut);
             }
@@ -528,6 +557,44 @@ private:
             setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(poseMsgIn.pose.pose, homogeneousDim));
         }
     }
+
+    rcl_interfaces::msg::SetParametersResult updateCompressionVoxelSize(const std::vector<rclcpp::Parameter>& updatedParams)
+    {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+
+        for (const auto& param : updatedParams)
+        {
+            // TODO find a way to move this to NodeParameters.cpp or sync the param name across files
+            if (param.get_name() == "compression_voxel_size" && param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE)
+            {
+                double voxelSize = param.as_double();
+
+                if (voxelSize < 0)
+                {
+                    RCLCPP_WARN_STREAM(this->get_logger(), "Invalid voxel size. Must be non-negative: " << voxelSize);
+                    result.successful = false;
+                    result.reason = "Invalid voxel size. Must be non-negative.";
+                }
+                else
+                {
+                    RCLCPP_DEBUG_STREAM(this->get_logger(), "Setting voxel size to: " << voxelSize);
+                    params->compressionVoxelSize = voxelSize;
+
+                    outputMapSubsamplingFilter =
+                        PM::get().DataPointsFilterRegistrar.create(
+           					"OctreeGridDataPointsFilter",
+           					{
+          						{"maxSizeByNode", PointMatcherSupport::toParam(params->compressionVoxelSize)}
+           					}
+                        );
+                    result.reason = "Voxel size updated successfully.";
+                }
+            }
+        }
+        return result;
+    }
+
 };
 
 int main(int argc, char** argv)

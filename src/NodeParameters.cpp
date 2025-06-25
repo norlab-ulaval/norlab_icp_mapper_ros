@@ -30,6 +30,8 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<int>("expected_unique_deskewing_TF_number", 4000);
     node.declare_parameter<int>("deskewing_round_to_nanosecs", 50000);
     node.declare_parameter<bool>("localizing", true);
+    node.declare_parameter<float>("compression_voxel_size", 0.5);
+
 }
 
 void NodeParameters::retrieveParameters(rclcpp::Node& node)
@@ -53,6 +55,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
 	node.get_parameter("expected_unique_deskewing_TF_number", expectedUniqueDeskewingTFNumber);
 	node.get_parameter("deskewing_round_to_nanosecs", deskewingRoundToNanoSecs);
 	node.get_parameter("localizing", localizing);
+	node.get_parameter("compression_voxel_size", compressionVoxelSize);
 }
 
 void NodeParameters::validateParameters() const
@@ -130,6 +133,12 @@ void NodeParameters::validateParameters() const
                 throw std::runtime_error("Deskewing round to nsecs value must be positive: " + std::to_string(deskewingRoundToNanoSecs));
             }
 	}
+
+	if (compressionVoxelSize < 0)
+	{
+		throw std::runtime_error("Compression voxel size must be non-negative: " + std::to_string(compressionVoxelSize));
+	}
+
 }
 
 void NodeParameters::parseComplexParameters()

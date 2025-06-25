@@ -17,6 +17,17 @@ def generate_launch_description():
                 executable="mapper_node",
                 name="mapper_node",
                 output="screen",
+                arguments=[
+                    "--ros-args",
+                    "--log-level",
+                    "debug",
+                    "--log-level",
+                    "rcl:=INFO",
+                    "--log-level",
+                    "rmw_fastrtps_cpp:=INFO",
+                    "--log-level",
+                    "rclcpp:=INFO",
+                ],
                 parameters=[
                     {
                         "use_sim_time": LaunchConfiguration("use_sim_time"),
@@ -40,6 +51,7 @@ def generate_launch_description():
                         "save_map_cells_on_hard_drive": True,
                         "publish_tfs_between_registrations": True,
                         "deskew": False,
+                        "compression_voxel_size": 0.2,
                     }
                 ],
                 remappings=[

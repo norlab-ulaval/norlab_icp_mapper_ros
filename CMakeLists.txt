@@ -24,7 +24,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/Save.srv"
     "srv/SetState.srv"
     "srv/LoadMap.srv"
-    DEPENDENCIES std_msgs geometry_msgs
+    DEPENDENCIES std_msgs geometry_msgs diagnostic_msgs
 )
 
 include_directories(

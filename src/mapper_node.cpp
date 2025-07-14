@@ -146,8 +146,8 @@ public:
         mappingStatus.hardware_id = "norlab_icp_mapper";
         mappingStatus.message = "Processing time and state of norlab icp mapper";
         mappingStatus.values.clear();
-        mappingDurationValue.key = "Mapping Duration [ms]";
-        mappingStateValue.key = "Mapping State";
+        mappingDurationValue.key = "Duration [ms]";
+        mappingStateValue.key = "State";
     }
 
 private:

@@ -5,9 +5,9 @@
 #include <rclcpp/rclcpp.hpp>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
 #include <norlab_icp_mapper/Trajectory.h>
-#include <norlab_icp_mapper_ros/srv/save_map.hpp>
+#include <norlab_icp_mapper_ros/srv/save.hpp>
 #include <norlab_icp_mapper_ros/srv/load_map.hpp>
-#include <norlab_icp_mapper_ros/srv/save_trajectory.hpp>
+#include <norlab_icp_mapper_ros/srv/set_state.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <std_srvs/srv/empty.hpp>
 #include <memory>
@@ -89,27 +89,21 @@ public:
         reloadYamlConfigService = this->create_service<std_srvs::srv::Empty>("reload_yaml_config",
                                                                              std::bind(&MapperNode::reloadYamlConfigCallback, this, std::placeholders::_1,
                                                                                        std::placeholders::_2));
-        saveMapService = this->create_service<norlab_icp_mapper_ros::srv::SaveMap>("save_map",
+        saveMapService = this->create_service<norlab_icp_mapper_ros::srv::Save>("save_map",
                                                                                    std::bind(&MapperNode::saveMapCallback, this, std::placeholders::_1,
                                                                                              std::placeholders::_2));
         loadMapService = this->create_service<norlab_icp_mapper_ros::srv::LoadMap>("load_map",
                                                                                    std::bind(&MapperNode::loadMapCallback, this, std::placeholders::_1,
                                                                                              std::placeholders::_2));
-        saveTrajectoryService = this->create_service<norlab_icp_mapper_ros::srv::SaveTrajectory>("save_trajectory",
+        saveTrajectoryService = this->create_service<norlab_icp_mapper_ros::srv::Save>("save_trajectory",
                                                                                                  std::bind(&MapperNode::saveTrajectoryCallback, this,
                                                                                                            std::placeholders::_1, std::placeholders::_2));
-        enableMappingService = this->create_service<std_srvs::srv::Empty>("enable_mapping",
-                                                                          std::bind(&MapperNode::enableMappingCallback, this, std::placeholders::_1,
+        enableMappingService = this->create_service<norlab_icp_mapper_ros::srv::SetState>("set_mapping_state",
+                                                                            std::bind(&MapperNode::setMappingStateCallback, this, std::placeholders::_1,
                                                                                     std::placeholders::_2));
-        disableMappingService = this->create_service<std_srvs::srv::Empty>("disable_mapping",
-                                                                           std::bind(&MapperNode::disableMappingCallback, this, std::placeholders::_1,
-                                                                                     std::placeholders::_2));
-        enableLocalizationService = this->create_service<std_srvs::srv::Empty>("enable_loc",
-                                                                          std::bind(&MapperNode::enableLocCallback, this, std::placeholders::_1,
+        enableLocalizationService = this->create_service<norlab_icp_mapper_ros::srv::SetState>("set_loc_state",
+                                                                          std::bind(&MapperNode::setLocStateCallback, this, std::placeholders::_1,
                                                                                     std::placeholders::_2));
-        disableLocalizationService = this->create_service<std_srvs::srv::Empty>("disable_loc",
-                                                                           std::bind(&MapperNode::disableLocCallback, this, std::placeholders::_1,
-                                                                                     std::placeholders::_2));
         mapPublisherThread = std::thread(&MapperNode::mapPublisherLoop, this);
         if(params->publishTfsBetweenRegistrations)
         {
@@ -171,13 +165,13 @@ private:
     PM::TransformationParameters previousRobotToMap;
     rclcpp::Time previousTimeStamp;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reloadYamlConfigService;
-    rclcpp::Service<norlab_icp_mapper_ros::srv::SaveMap>::SharedPtr saveMapService;
+    rclcpp::Service<norlab_icp_mapper_ros::srv::Save>::SharedPtr saveMapService;
     rclcpp::Service<norlab_icp_mapper_ros::srv::LoadMap>::SharedPtr loadMapService;
-    rclcpp::Service<norlab_icp_mapper_ros::srv::SaveTrajectory>::SharedPtr saveTrajectoryService;
-    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr enableMappingService;
-    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr disableMappingService;
-    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr enableLocalizationService;
-    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr disableLocalizationService;
+    rclcpp::Service<norlab_icp_mapper_ros::srv::Save>::SharedPtr saveTrajectoryService;
+    rclcpp::Service<norlab_icp_mapper_ros::srv::SetState>::SharedPtr enableMappingService;
+    rclcpp::Service<norlab_icp_mapper_ros::srv::SetState>::SharedPtr disableMappingService;
+    rclcpp::Service<norlab_icp_mapper_ros::srv::SetState>::SharedPtr enableLocalizationService;
+    rclcpp::Service<norlab_icp_mapper_ros::srv::SetState>::SharedPtr disableLocalizationService;
     std::thread mapPublisherThread;
     std::thread mapTfPublisherThread;
 
@@ -467,15 +461,19 @@ private:
     	mapper->loadYamlConfig(params->mappingConfig);
     }
 
-    void saveMapCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Response> res)
+    void saveMapCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::Save::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::Save::Response> res)
     {
     	try
     	{
-    		saveMap(req->map_file_name.data);
+    		saveMap(req->file_name.data);
+            res->success = true;
+            res->message = "Map saved successfully to " + std::string(req->file_name.data);
     	}
     	catch(const std::runtime_error& e)
     	{
     		RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", e.what());
+            res->success = false;
+            res->message = e.what();
     	}
     }
 
@@ -494,54 +492,70 @@ private:
     	}
     }
 
-    void saveTrajectoryCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::SaveTrajectory::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::SaveTrajectory::Response> res)
+    void saveTrajectoryCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::Save::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::Save::Response> res)
     {
     	try
     	{
-    		saveTrajectory(req->trajectory_file_name.data);
+    		saveTrajectory(req->file_name.data);
+            res->success = true;
+            res->message = "Trajectory saved successfully to " + std::string(req->file_name.data);
     	}
     	catch(const std::runtime_error& e)
     	{
     		RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", e.what());
+            res->success = false;
+            res->message = e.what();
     	}
     }
 
-    void enableMappingCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    void setMappingStateCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::SetState::Request> req,
+                                std::shared_ptr<norlab_icp_mapper_ros::srv::SetState::Response> res)
     {
-    	RCLCPP_INFO(this->get_logger(), "Enabling mapping");
-        isLocalizingLock.lock();
-        if(!isLocalizing)
+        res->success = true;
+        if (req->state == true)
         {
-            isLocalizing = true;
+           	RCLCPP_INFO(this->get_logger(), "Enabling mapping");
+            isLocalizingLock.lock();
+            if(!isLocalizing)
+            {
+                isLocalizing = true;
+            }
+            isLocalizingLock.unlock();
+           	mapper->setIsMapping(true);
+            res->message = "Mapping enabled";
         }
-        isLocalizingLock.unlock();
-    	mapper->setIsMapping(true);
-    }
-
-    void disableMappingCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
-    {
-        RCLCPP_INFO(this->get_logger(), "Disabling mapping");
-    	mapper->setIsMapping(false);
-    }
-
-    void enableLocCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
-    {
-    	RCLCPP_INFO(this->get_logger(), "Enabling localization");
-        isLocalizingLock.lock();
-    	isLocalizing = true;
-        isLocalizingLock.unlock();
-    }
-
-    void disableLocCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
-    {
-        RCLCPP_INFO(this->get_logger(), "Disabling localization");
-        if(mapper->getIsMapping())
+        else
         {
-    	    mapper->setIsMapping(false);
+            RCLCPP_INFO(this->get_logger(), "Disabling mapping");
+           	mapper->setIsMapping(false);
+            res->message = "Mapping disabled";
         }
-        isLocalizingLock.lock();
-        isLocalizing = false;
-        isLocalizingLock.unlock();
+    }
+
+    void setLocStateCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::SetState::Request> req,
+                                std::shared_ptr<norlab_icp_mapper_ros::srv::SetState::Response> res)
+    {
+        res->success = true;
+        if (req->state == true)
+        {
+           	RCLCPP_INFO(this->get_logger(), "Enabling localization");
+            isLocalizingLock.lock();
+           	isLocalizing = true;
+            isLocalizingLock.unlock();
+            res->message = "Localization enabled";
+        }
+        else
+        {
+            RCLCPP_INFO(this->get_logger(), "Disabling localization");
+            if(mapper->getIsMapping())
+            {
+           	    mapper->setIsMapping(false);
+            }
+            isLocalizingLock.lock();
+            isLocalizing = false;
+            isLocalizingLock.unlock();
+            res->message = "Localization disabled";
+        }
     }
 
     void relocalizePoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped& poseMsgIn)

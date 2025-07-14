@@ -1,5 +1,6 @@
 #include "Deskewer.h"
 #include "NodeParameters.h"
+#include "norlab_icp_mapper/Mapper.h"
 #include <chrono>
 #include <cstdint>
 #include <rclcpp/rclcpp.hpp>
@@ -10,6 +11,9 @@
 #include <norlab_icp_mapper_ros/srv/set_state.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <std_srvs/srv/empty.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
+#include <diagnostic_msgs/msg/key_value.hpp>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -132,10 +136,18 @@ public:
             PM::get().DataPointsFilterRegistrar.create(
 				"OctreeGridDataPointsFilter",
 				{
-				{"maxSizeByNode", PointMatcherSupport::toParam(params->compressionVoxelSize)}
+				    {"maxSizeByNode", PointMatcherSupport::toParam(params->compressionVoxelSize)}
 				}
             );
+        diagnosticsPub = create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", 10);
 
+        // init mapping and localization status
+        mappingStatus.name = "Norlab ICP Mapper Status";
+        mappingStatus.hardware_id = "norlab_icp_mapper";
+        mappingStatus.message = "Processing time and state of norlab icp mapper";
+        mappingStatus.values.clear();
+        mappingDurationValue.key = "Mapping Duration [ms]";
+        mappingStateValue.key = "Mapping State";
     }
 
 private:
@@ -159,6 +171,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr inputFiltersScanPublisher;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr deskewingScanPublisher;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
+    rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnosticsPub;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr relocalizePoseSubscription;
@@ -172,6 +185,11 @@ private:
     rclcpp::Service<norlab_icp_mapper_ros::srv::SetState>::SharedPtr disableMappingService;
     rclcpp::Service<norlab_icp_mapper_ros::srv::SetState>::SharedPtr enableLocalizationService;
     rclcpp::Service<norlab_icp_mapper_ros::srv::SetState>::SharedPtr disableLocalizationService;
+
+    diagnostic_msgs::msg::DiagnosticStatus mappingStatus;
+    diagnostic_msgs::msg::KeyValue mappingDurationValue;
+    diagnostic_msgs::msg::KeyValue mappingStateValue;
+
     std::thread mapPublisherThread;
     std::thread mapTfPublisherThread;
 
@@ -256,10 +274,13 @@ private:
 
     void gotInput(PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& cloudStamp)
     {
+        mappingStatus.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
         rclcpp::Time timeStamp = cloudStamp;
         std::chrono::steady_clock::time_point processingStartTime = std::chrono::steady_clock::now();
+        long processingDuration(0);
         try
         {
+            norlab_icp_mapper::MapperState state = norlab_icp_mapper::MapperState::FAILURE;
             mapper->applyInputFilters(input);
             std::chrono::steady_clock::time_point filterEndTime = std::chrono::steady_clock::now();
             RCLCPP_DEBUG_STREAM(this->get_logger(), "Applied input filters in " << std::chrono::duration_cast<std::chrono::milliseconds>(filterEndTime - processingStartTime).count() << " [ms]");
@@ -289,7 +310,7 @@ private:
             try
             {
                 std::chrono::steady_clock::time_point mappingStartTime = std::chrono::steady_clock::now();
-                mapper->processInput(input, sensorToMapBeforeUpdate,
+                state = mapper->processInput(input, sensorToMapBeforeUpdate,
                                      std::chrono::time_point<std::chrono::steady_clock>(std::chrono::nanoseconds(timeStamp.nanoseconds())));
                 std::chrono::steady_clock::time_point mappingEndTime = std::chrono::steady_clock::now();
                 RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapper call executed in: " << std::chrono::duration_cast<std::chrono::milliseconds>(mappingEndTime - mappingStartTime).count() << " [ms]");
@@ -344,15 +365,68 @@ private:
             idleTimeLock.lock();
             lastTimeInputWasProcessed = std::chrono::steady_clock::now();
             idleTimeLock.unlock();
+
+            std::chrono::steady_clock::time_point processingEndTime = std::chrono::steady_clock::now();
+            processingDuration = std::chrono::duration_cast<std::chrono::milliseconds>(processingEndTime - processingStartTime).count();
+            std::string message;
+
+            if (state == norlab_icp_mapper::MapperState::LOCALIZING)
+            {
+                mappingStateValue.value = "LOCALIZING";
+                // If the mapping takes more than 100ms, we are not real time anymore
+                if (processingDuration > 100)
+                {
+                    mappingStatus.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+                    RCLCPP_WARN_STREAM(this->get_logger(), "Localization finished in " << processingDuration << " [ms]");
+                }
+                else
+                {
+                    mappingStatus.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+                    RCLCPP_DEBUG_STREAM(this->get_logger(), "Localization finished in " << processingDuration << " [ms]");
+                }
+            }
+            else if (state == norlab_icp_mapper::MapperState::MAPPING)
+            {
+                mappingStateValue.value = "MAPPING";
+                // If the mapping takes more than 100ms, we are not real time anymore
+                if (processingDuration > 100)
+                {
+                    mappingStatus.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+                    RCLCPP_WARN_STREAM(this->get_logger(), "Mapping finished in " << processingDuration << " [ms]");
+                }
+                else
+                {
+                    mappingStatus.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+                    RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapping finished in " << processingDuration << " [ms]");
+                }
+            }
+            else
+            {
+                mappingStateValue.value = "FAILURE";
+                mappingStatus.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+                RCLCPP_ERROR_STREAM(this->get_logger(), "Mapping finished with failure in " << processingDuration << " [ms]");
+            }
+
         }
         catch(const tf2::TransformException& ex)
         {
-            RCLCPP_WARN(this->get_logger(), "%s", ex.what());
+            RCLCPP_ERROR(this->get_logger(), "%s", ex.what());
+            mappingStatus.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+            mappingStateValue.value = "FAILURE";
         }
 
-        std::chrono::steady_clock::time_point processingEndTime = std::chrono::steady_clock::now();
-        RCLCPP_DEBUG_STREAM(this->get_logger(), "Mapping finished in " << std::chrono::duration_cast<std::chrono::milliseconds>(processingEndTime - processingStartTime).count() << " [ms]");
+        mappingDurationValue.value = std::to_string(processingDuration);
+        mappingStatus.values.push_back(mappingDurationValue);
+        mappingStatus.values.push_back(mappingStateValue);
+        publishDiagnosticStatus();
+    }
 
+    void publishDiagnosticStatus()
+    {
+        diagnostic_msgs::msg::DiagnosticArray diagArrayMsg;
+        diagArrayMsg.header.stamp = now();
+        diagArrayMsg.status.push_back(mappingStatus);
+        diagnosticsPub->publish(diagArrayMsg);
     }
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)

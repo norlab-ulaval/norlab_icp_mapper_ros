@@ -48,15 +48,13 @@ These parameters can be changed at runtime using the ROS parameter server.
 
 ## Node Services
 
-|        Name        |                              Description                               | Parameter Name |               Parameter Description                |
-| :----------------: | :--------------------------------------------------------------------: | :------------: | :------------------------------------------------: |
-|      save_map      |                         Saves the current map.                         |    filename    |    Path of the file in which the map is saved.     |
-|  save_trajectory   |                     Saves the current trajectory.                      |    filename    | Path of the file in which the trajectory is saved. |
-| reload_yaml_config |                      Reload the YAML config file.                      |                |                                                    |
-|   enable_mapping   | Enables the mapping (If localization is disabled, it enables it too).  |                |                                                    |
-|  disable_mapping   |                         Disables the mapping.                          |                |                                                    |
-|     enable_loc     |                       Enables the localization.                        |                |                                                    |
-|    disable_loc     | Disables the localization (If mapping is enabled, it disables it too). |                |                                                    |
+|        Name        |                                        Description                                         | Parameter Name |               Parameter Description                |
+| :----------------: | :----------------------------------------------------------------------------------------: | :------------: | :------------------------------------------------: |
+|      save_map      |                                   Saves the current map.                                   |   file_name    |    Path of the file in which the map is saved.     |
+|  save_trajectory   |                               Saves the current trajectory.                                |   file_name    | Path of the file in which the trajectory is saved. |
+| reload_yaml_config |                                Reload the YAML config file.                                |                |                                                    |
+| set_mapping_state  | Enables/disables the mapping (If enable and localization is disabled, it enables it too).  |     state      |             boolean value (true/false)             |
+|   set_loc_state    | Enables/disables the localization (If disable and mapping is enabled, it disables it too). |     state      |             boolean value (true/false)             |
 
 ## Mapper Node Graph
 
@@ -71,14 +69,11 @@ flowchart LR
 /map([ /map<br>sensor_msgs/msg/PointCloud2 ]):::bugged
 /scan_after_input_filters([ /map<br>sensor_msgs/msg/PointCloud2 ]):::bugged
 /scan_after_deskew([ /map<br>sensor_msgs/msg/PointCloud2 ]):::bugged
-/disable_mapping[/ /disable_mapping<br>std_srvs/srv/Empty \]:::bugged
-/enable_mapping[/ /enable_mapping<br>std_srvs/srv/Empty \]:::bugged
-/disable_loc[/ /disable_loc<br>std_srvs/srv/Empty \]:::bugged
-/enable_loc[/ /enable_loc<br>std_srvs/srv/Empty \]:::bugged
+/set_mapping_state[/ /set_mapping_state<br>norlab_icp_mapper_ros/srv/SetState \]:::bugged
+/set_loc_state[/ /set_loc_state<br>norlab_icp_mapper_ros/srv/SetState \]:::bugged
 /load_map[/ /load_map<br>norlab_icp_mapper_ros/srv/LoadMap \]:::bugged
 /reload_yaml_config[/ /reload_yaml_config<br>std_srvs/srv/Empty \]:::bugged
-/save_map[/ /save_map<br>norlab_icp_mapper_ros/srv/SaveMap \]:::bugged
-/save_trajectory[/ /save_trajectory<br>norlab_icp_mapper_ros/srv/SaveTrajectory \]:::bugged
+/save[/ /save<br>norlab_icp_mapper_ros/srv/Save \]:::bugged
 
 /points_in --> /mapper_node
 /pose_in --> /mapper_node

@@ -1,38 +1,52 @@
 mapper:
   updateCondition:
-    type: delay
+    type: distance
     value: 0.5
 
   sensorMaxRange: 100
 
   mapperModule:
+    - DynamicPointsMapperModule:
+        thresholdDynamic: 0.75
+        alpha: 0.8
+        beta: 0.99
+        beamHalfAngle: 0.017453292
+        epsilonA: 0.01
+        epsilonD: 0.01
+
     - PointDistanceMapperModule:
-        minDistNewPoint: 0.1
+        minDistNewPoint: 0.2
 
 input:
+  - BoundingBoxDataPointsFilter:
+      xMin: -0.5
+      xMax: 1.5
+      yMin: -1
+      yMax: 1
+      zMin: -1
+      zMax: 0.5
+      removeInside: 1
+
+  - BoundingBoxDataPointsFilter:
+      xMin: 1.5
+      xMax: 6
+      yMin: -2.5
+      yMax: 2.5
+      zMin: -1
+      zMax: 1
+      removeInside: 1
+
   - RandomSamplingDataPointsFilter:
-      prob: 0.8
+      prob: 0.2
+  - ObservationDirectionDataPointsFilter:
 
   - AddDescriptorDataPointsFilter:
       descriptorName: probabilityDynamic
       descriptorDimension: 1
       descriptorValues: [0.6]
 
-  - SamplingSurfaceNormalDataPointsFilter:
-      ratio: 0.5
-      knn: 7
-      samplingMethod: 0
-      maxBoxDim: inf
-      averageExistingDescriptors: 1
-      keepNormals: 1
-      keepDensities: 0
-      keepEigenValues: 0
-      keepEigenVectors: 0
-
 icp:
   readingDataPointsFilters:
-    - RandomSamplingDataPointsFilter:
-        prob: 0.8
 
   referenceDataPointsFilters:
 
@@ -42,12 +56,13 @@ icp:
 
   matcher:
     KDTreeMatcher:
-      knn: 3
+      knn: 5
       epsilon: 1
       searchType: 1
       maxDist: 200.0
 
   errorMinimizer:
+    # PointToPointErrorMinimizer:
     PointToPlaneErrorMinimizer:
       force4DOF: 1
 
@@ -64,3 +79,10 @@ icp:
   logger: NullLogger
 
 post:
+  - CutAtDescriptorThresholdDataPointsFilter:
+      descName: probabilityDynamic
+      useLargerThan: 1
+      threshold: 0.8
+
+  - SurfaceNormalDataPointsFilter:
+      knn: 10

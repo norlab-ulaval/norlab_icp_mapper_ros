@@ -60,7 +60,9 @@ public:
         tfListener = std::unique_ptr<tf2_ros::TransformListener>(new tf2_ros::TransformListener(*tfBuffer));
         tfBroadcaster = std::unique_ptr<tf2_ros::TransformBroadcaster>(new tf2_ros::TransformBroadcaster(*this));
 
-        mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", 2);
+        rclcpp::QoS qos_profile(2);
+        qos_profile.durability(rclcpp::DurabilityPolicy::TransientLocal);
+        mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", qos_profile);
         inputFiltersScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_input_filters", 1);
         deskewingScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_deskew", 1);
         odomPublisher = this->create_publisher<nav_msgs::msg::Odometry>("icp_odom", 50);

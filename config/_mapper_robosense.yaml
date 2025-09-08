@@ -1,7 +1,7 @@
 mapper:
   updateCondition:
-    type: distance
-    value: 0.5
+    type: delay
+    value: 1.0
 
   sensorMaxRange: 100
 
@@ -15,7 +15,7 @@ mapper:
         epsilonD: 0.01
 
     - PointDistanceMapperModule:
-        minDistNewPoint: 0.2
+        minDistNewPoint: 0.3
 
 input:
   - BoundingBoxDataPointsFilter:
@@ -37,19 +37,16 @@ input:
       removeInside: 1
 
   - RandomSamplingDataPointsFilter:
-      prob: 0.2
+      prob: 0.175
+
   - ObservationDirectionDataPointsFilter:
 
   - AddDescriptorDataPointsFilter:
       descriptorName: probabilityDynamic
       descriptorDimension: 1
-      descriptorValues: [0.6]
+      descriptorValues: [0.6] # This value is the initial probability of each point being dynamic
 
 icp:
-  readingDataPointsFilters:
-
-  referenceDataPointsFilters:
-
   outlierFilters:
     - TrimmedDistOutlierFilter:
         ratio: 0.75
@@ -58,20 +55,20 @@ icp:
     KDTreeMatcher:
       knn: 5
       epsilon: 1
-      searchType: 1
-      maxDist: 200.0
+      maxDist: 2.0
 
   errorMinimizer:
-    # PointToPointErrorMinimizer:
-    PointToPlaneErrorMinimizer:
-      force4DOF: 1
+    PointToPointErrorMinimizer:
+    # PointToPlaneErrorMinimizer:
+    #   force4DOF: 1
+    # IdentityErrorMinimizer:
 
   transformationCheckers:
     - CounterTransformationChecker:
         maxIterationCount: 40
     - DifferentialTransformationChecker:
         minDiffRotErr: 0.001
-        minDiffTransErr: 0.001
+        minDiffTransErr: 0.01
         smoothLength: 3
 
   inspector: NullInspector

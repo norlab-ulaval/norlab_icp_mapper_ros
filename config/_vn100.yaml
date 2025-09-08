@@ -1,0 +1,7 @@
+/**:
+  madgwick_filter:
+    ros__parameters:
+      gain: 0.01
+      use_mag: false
+      fixed_frame: "odom"
+      publish_tf: false

@@ -1,19 +1,12 @@
 import os
+import json
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
-from launch.actions import IncludeLaunchDescription
-from launch.launch_description_sources import PythonLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import LaunchConfiguration
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.substitutions import Command, FindExecutable, PathJoinSubstitution
-from launch_ros.actions import Node
-from launch_ros.substitutions import FindPackageShare
-from launch_ros.descriptions import ParameterValue
 from launch.actions import (
-    EmitEvent,
     TimerAction,
     ExecuteProcess,
     RegisterEventHandler,
@@ -22,36 +15,35 @@ from launch.actions import (
     GroupAction,
 )
 from launch.event_handlers import OnProcessExit, OnProcessStart
-import json
 
 # row is map source
 # col is rosbag
-BASE_INPUT_PATH = "/home/user/data/lidar-evaluation"
-DEPLOYMENT_ROW_FOLDER = "2024-11-21"
-TRAJECTORY_ROW_FOLDER = f"blue-{DEPLOYMENT_ROW_FOLDER}-10-44"
+# BASE_INPUT_PATH = "/home/user/data/lidar-evaluation"
+# DEPLOYMENT_ROW_FOLDER = "2024-11-21"
+# TRAJECTORY_ROW_FOLDER = f"blue-{DEPLOYMENT_ROW_FOLDER}-10-44"
 
-DEPLOYMENT_COL_FOLDER = "2025-06-26"
-TRAJECTORY_COL_FOLDER = f"blue-{DEPLOYMENT_COL_FOLDER}-10-35"
-IS_MAPPING = TRAJECTORY_ROW_FOLDER != TRAJECTORY_COL_FOLDER
-if TRAJECTORY_ROW_FOLDER == TRAJECTORY_COL_FOLDER:
-    INPUT_MAP_FILE = ""
-else:
-    INPUT_MAP_FILE = os.path.join(
-        BASE_INPUT_PATH,
-        DEPLOYMENT_ROW_FOLDER,
-        TRAJECTORY_ROW_FOLDER,
-        f"{TRAJECTORY_ROW_FOLDER}_map.vtk",
-    )
-INPUT_IMU_BIAS_FILE = os.path.join(
-    BASE_INPUT_PATH, DEPLOYMENT_COL_FOLDER, TRAJECTORY_COL_FOLDER, "calib", "imu.json"
-)
-OUTPUT_MAP_TRAJ_PATH = os.path.join(
-    BASE_INPUT_PATH, DEPLOYMENT_COL_FOLDER, TRAJECTORY_COL_FOLDER, TRAJECTORY_ROW_FOLDER
-)
-PLAYBACK_RATE = 1.0
-INPUT_BAG = os.path.join(BASE_INPUT_PATH, DEPLOYMENT_COL_FOLDER, TRAJECTORY_COL_FOLDER)
-IMU = "vectornav"  # or 'xsens'
-LIDAR = "robosense"
+# DEPLOYMENT_COL_FOLDER = "2025-06-26"
+# TRAJECTORY_COL_FOLDER = f"blue-{DEPLOYMENT_COL_FOLDER}-10-35"
+# IS_MAPPING = TRAJECTORY_ROW_FOLDER != TRAJECTORY_COL_FOLDER
+# if TRAJECTORY_ROW_FOLDER == TRAJECTORY_COL_FOLDER:
+#     INPUT_MAP_FILE = ""
+# else:
+#     INPUT_MAP_FILE = os.path.join(
+#         BASE_INPUT_PATH,
+#         DEPLOYMENT_ROW_FOLDER,
+#         TRAJECTORY_ROW_FOLDER,
+#         f"{TRAJECTORY_ROW_FOLDER}_map.vtk",
+#     )
+# INPUT_IMU_BIAS_FILE = os.path.join(
+#     BASE_INPUT_PATH, DEPLOYMENT_COL_FOLDER, TRAJECTORY_COL_FOLDER, "calib", "imu.json"
+# )
+# OUTPUT_MAP_TRAJ_PATH = os.path.join(
+#     BASE_INPUT_PATH, DEPLOYMENT_COL_FOLDER, TRAJECTORY_COL_FOLDER, TRAJECTORY_ROW_FOLDER
+# )
+# PLAYBACK_RATE = 1.0
+# INPUT_BAG = os.path.join(BASE_INPUT_PATH, DEPLOYMENT_COL_FOLDER, TRAJECTORY_COL_FOLDER)
+# IMU_TYPE = "vectornav"  # or 'xsens'
+# LIDAR_TYPE = "robosense"
 
 
 def generate_launch_description():
@@ -63,6 +55,29 @@ def generate_launch_description():
             "use_sim_time", default_value="true", description="Use simulation time"
         )
     )
+
+    base_path = os.getenv("BASE_INPUT_PATH", "/home/user/data/lidar-evaluation")
+    row_folder = os.getenv("DEPLOYMENT_ROW_FOLDER", "2024-11-21")
+    col_folder = os.getenv("DEPLOYMENT_COL_FOLDER", "2025-06-26")
+    traj_row = os.getenv("TRAJECTORY_ROW_FOLDER", f"blue-{row_folder}-10-44")
+    traj_col = os.getenv("TRAJECTORY_COL_FOLDER", f"blue-{col_folder}-10-35")
+    IMU_TYPE = os.getenv("IMU_TYPE", "vectornav")
+    LIDAR_TYPE = os.getenv("LIDAR_TYPE", "robosense")
+    PLAYBACK_RATE = float(os.getenv("PLAYBACK_RATE", "1.0"))
+
+    IS_MAPPING = traj_row == traj_col
+    if IS_MAPPING:
+        INPUT_MAP_FILE = ""
+    else:
+        INPUT_MAP_FILE = os.path.join(
+            base_path, row_folder, traj_row, f"{traj_row}_map.vtk"
+        )
+
+    INPUT_IMU_BIAS_FILE = os.path.join(
+        base_path, col_folder, traj_col, "calib", "imu.json"
+    )
+    OUTPUT_MAP_TRAJ_PATH = os.path.join(base_path, col_folder, traj_col, traj_row)
+    INPUT_BAG = os.path.join(base_path, col_folder, traj_col)
 
     rosbag_process = ExecuteProcess(
         cmd=[
@@ -148,10 +163,10 @@ def generate_launch_description():
         ),
     )
 
-    if IMU == "vectornav":
+    if IMU_TYPE == "vectornav":
         namespace = LaunchConfiguration("vn100_ns")
         vectornav_namespace_launch_arg = DeclareLaunchArgument(
-            "vn100_ns", default_value=IMU
+            "vn100_ns", default_value=IMU_TYPE
         )
 
         config_file = os.path.join(share_folder, "config", "_vn100.yaml")
@@ -162,9 +177,9 @@ def generate_launch_description():
 
         with open(INPUT_IMU_BIAS_FILE, "r") as f:
             bias_data = json.load(f)
-            bias_x = bias_data[IMU]["angular_velocity"]["x"]
-            bias_y = bias_data[IMU]["angular_velocity"]["y"]
-            bias_z = bias_data[IMU]["angular_velocity"]["z"]
+            bias_x = bias_data[IMU_TYPE]["angular_velocity"]["x"]
+            bias_y = bias_data[IMU_TYPE]["angular_velocity"]["y"]
+            bias_z = bias_data[IMU_TYPE]["angular_velocity"]["z"]
 
         print(f"Biases: x={bias_x}, y={bias_y}, z={bias_z}")
         bias_compensator_node = Node(
@@ -224,7 +239,7 @@ def generate_launch_description():
                 )
             ),
         )
-    elif IMU == "xsens":
+    elif IMU_TYPE == "xsens":
         raise NotImplementedError("xsens IMU is not yet supported")
 
     imu_and_wheel_odom_config_file = os.path.join(
@@ -244,7 +259,7 @@ def generate_launch_description():
             },
         ],
         remappings=[
-            ("imu_topic", f"{IMU}/data"),
+            ("imu_topic", f"{IMU_TYPE}/data"),
             ("wheel_odom_topic", "/warthog/platform/odom"),
         ],
         arguments=[
@@ -262,7 +277,7 @@ def generate_launch_description():
         arguments=[
             "--ros-args",
             "--log-level",
-            "debug",
+            "info",
             "--log-level",
             "rcl:=INFO",
             "--log-level",
@@ -278,12 +293,12 @@ def generate_launch_description():
                 "mapping_config": os.path.join(
                     get_package_share_directory("norlab_icp_mapper_ros"),
                     "config",
-                    f"_mapper_{LIDAR}.yaml",
+                    f"_mapper_{LIDAR_TYPE}.yaml",
                 ),
                 "initial_map_file_name": INPUT_MAP_FILE,
                 "initial_robot_pose": "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]",
-                "final_map_file_name": "map.vtk",
-                "final_trajectory_file_name": "trajectory.vtk",
+                "final_map_file_name": f"{OUTPUT_MAP_TRAJ_PATH}/map.vtk",
+                "final_trajectory_file_name": f"{OUTPUT_MAP_TRAJ_PATH}/trajectory.vtk",
                 "map_publish_rate": 10.0,
                 "map_tf_publish_rate": 10.0,
                 "max_idle_time": 10.0,
@@ -297,9 +312,9 @@ def generate_launch_description():
             }
         ],
         remappings=[
-            ("points_in", f"{LIDAR}/points"),
-            ("scan_after_input_filters", f"{LIDAR}/points_after_input_filters"),
-            ("scan_after_deskew", f"{LIDAR}/points_after_deskew"),
+            ("points_in", f"{LIDAR_TYPE}/points"),
+            ("scan_after_input_filters", f"{LIDAR_TYPE}/points_after_input_filters"),
+            ("scan_after_deskew", f"{LIDAR_TYPE}/points_after_deskew"),
         ],
     )
 

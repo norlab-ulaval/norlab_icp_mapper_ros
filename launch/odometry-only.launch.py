@@ -38,9 +38,9 @@ def generate_launch_description():
 
         with open(INPUT_IMU_BIAS_FILE, "r") as f:
             bias_data = json.load(f)
-            bias_x = bias_data[IMU_TYPE]["angular_velocity"]["x"]
-            bias_y = bias_data[IMU_TYPE]["angular_velocity"]["y"]
-            bias_z = bias_data[IMU_TYPE]["angular_velocity"]["z"]
+            bias_x = bias_data[IMU_TYPE]["angular_velocities"]["x"]
+            bias_y = bias_data[IMU_TYPE]["angular_velocities"]["y"]
+            bias_z = bias_data[IMU_TYPE]["angular_velocities"]["z"]
 
         print(f"Biases: x={bias_x}, y={bias_y}, z={bias_z}")
         bias_compensator_node = Node(

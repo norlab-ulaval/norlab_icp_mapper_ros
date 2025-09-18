@@ -11,14 +11,12 @@ from launch.actions import (
 )
 from launch.event_handlers import OnProcessStart
 
-# row is map source
-# col is rosbag
-INPUT_PATH = "/home/user/data/calibration/odom/line"
-
-IS_MAPPING = True
-INPUT_IMU_BIAS_FILE = os.path.join(INPUT_PATH, "calib", "imu.json")
+IS_MAPPING = os.getenv("IS_MAPPING")
+INPUT_IMU_BIAS_FILE = os.path.join("/", "calib", "imu.json")
 IMU_TYPE = "vectornav"  # or 'xsens'
 LIDAR_TYPE = "robosense"
+
+init_map_name = "" if IS_MAPPING == "1" else "/data/map.vtk"
 
 
 def generate_launch_description():
@@ -43,11 +41,11 @@ def generate_launch_description():
         bias_y = 0.0
         bias_z = 0.0
 
-        # with open(INPUT_IMU_BIAS_FILE, "r") as f:
-        #     bias_data = json.load(f)
-        #     bias_x = bias_data[IMU_TYPE]["angular_velocity"]["x"]
-        #     bias_y = bias_data[IMU_TYPE]["angular_velocity"]["y"]
-        #     bias_z = bias_data[IMU_TYPE]["angular_velocity"]["z"]
+        with open(INPUT_IMU_BIAS_FILE, "r") as f:
+            bias_data = json.load(f)
+            bias_x = bias_data[IMU_TYPE]["angular_velocities"]["x"]
+            bias_y = bias_data[IMU_TYPE]["angular_velocities"]["y"]
+            bias_z = bias_data[IMU_TYPE]["angular_velocities"]["z"]
 
         print(f"Biases: x={bias_x}, y={bias_y}, z={bias_z}")
         bias_compensator_node = Node(
@@ -149,14 +147,14 @@ def generate_launch_description():
                     "config",
                     f"_mapper_{LIDAR_TYPE}.yaml",
                 ),
-                "initial_map_file_name": "",
+                "initial_map_file_name": init_map_name,
                 "initial_robot_pose": "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]",
                 "final_map_file_name": "map.vtk",
                 "final_trajectory_file_name": "trajectory.vtk",
                 "map_publish_rate": 10.0,
                 "map_tf_publish_rate": 10.0,
                 "max_idle_time": 10.0,
-                "is_mapping": IS_MAPPING,
+                "is_mapping": True if IS_MAPPING == "1" else False,
                 "is_online": True,
                 "is_3D": True,
                 "save_map_cells_on_hard_drive": True,

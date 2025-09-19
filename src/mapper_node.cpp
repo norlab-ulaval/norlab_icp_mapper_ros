@@ -146,6 +146,19 @@ public:
 
     }
 
+    ~MapperNode() {
+        this->saveMapOnShutdown();
+    }
+
+    void saveMapOnShutdown() {
+        try {
+            RCLCPP_INFO(this->get_logger(), "Node shutting down, saving final map...");
+            saveMap(params->finalMapFileName);
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to save map on shutdown: %s", e.what());
+        }
+    }
+
 private:
     typedef PointMatcher<float> PM;
 
@@ -602,7 +615,30 @@ private:
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<MapperNode>());
+
+
+    auto node = std::make_shared<MapperNode>();
+
+    // Register shutdown callback on the global context
+    auto context = rclcpp::contexts::get_global_default_context();
+
+    // Use a weak pointer to avoid keeping the node alive
+    std::weak_ptr<MapperNode> weak_node = node;
+
+    context->add_on_shutdown_callback(
+        [weak_node]() {
+            if (auto n = weak_node.lock()) {
+                RCLCPP_INFO(n->get_logger(), "Received a shut down call");
+                n->saveMapOnShutdown();
+            }
+        });
+
+    try {
+        rclcpp::spin(node);
+    } catch (const std::exception & e) {
+        RCLCPP_ERROR(node->get_logger(), "Exception: %s", e.what());
+    }
+
     rclcpp::shutdown();
     return 0;
 }

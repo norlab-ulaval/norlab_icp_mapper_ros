@@ -12,11 +12,13 @@ from launch.actions import (
 from launch.event_handlers import OnProcessStart
 
 IS_MAPPING = os.getenv("IS_MAPPING")
+STORAGE_PATH = os.getenv("STORAGE_PATH")
 INPUT_IMU_BIAS_FILE = os.path.join("/", "calib", "imu.json")
 IMU_TYPE = "vectornav"  # or 'xsens'
 LIDAR_TYPE = "robosense"
 
-init_map_name = "" if IS_MAPPING == "1" else "/data/map.vtk"
+input_map_name = "" if IS_MAPPING == "1" else f"{STORAGE_PATH}/map.vtk"
+output_map_name = "" if IS_MAPPING != "1" else f"{STORAGE_PATH}/map.vtk"
 
 
 def generate_launch_description():
@@ -41,11 +43,14 @@ def generate_launch_description():
         bias_y = 0.0
         bias_z = 0.0
 
-        with open(INPUT_IMU_BIAS_FILE, "r") as f:
-            bias_data = json.load(f)
-            bias_x = bias_data[IMU_TYPE]["angular_velocities"]["x"]
-            bias_y = bias_data[IMU_TYPE]["angular_velocities"]["y"]
-            bias_z = bias_data[IMU_TYPE]["angular_velocities"]["z"]
+        if os.path.exists(INPUT_IMU_BIAS_FILE):
+            with open(INPUT_IMU_BIAS_FILE, "r") as f:
+                bias_data = json.load(f)
+                bias_x = bias_data[IMU_TYPE]["angular_velocities"]["x"]
+                bias_y = bias_data[IMU_TYPE]["angular_velocities"]["y"]
+                bias_z = bias_data[IMU_TYPE]["angular_velocities"]["z"]
+        else:
+            print("No bias file found, using default values")
 
         print(f"Biases: x={bias_x}, y={bias_y}, z={bias_z}")
         bias_compensator_node = Node(
@@ -147,9 +152,9 @@ def generate_launch_description():
                     "config",
                     f"_mapper_{LIDAR_TYPE}.yaml",
                 ),
-                "initial_map_file_name": init_map_name,
+                "initial_map_file_name": input_map_name,
                 "initial_robot_pose": "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]",
-                "final_map_file_name": "map.vtk",
+                "final_map_file_name": output_map_name,
                 "final_trajectory_file_name": "trajectory.vtk",
                 "map_publish_rate": 10.0,
                 "map_tf_publish_rate": 10.0,

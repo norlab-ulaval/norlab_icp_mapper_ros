@@ -5,11 +5,6 @@ from launch.actions import DeclareLaunchArgument
 from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import LaunchConfiguration
 from launch import LaunchDescription
-from launch.actions import (
-    ExecuteProcess,
-    RegisterEventHandler,
-)
-from launch.event_handlers import OnProcessStart
 
 IS_MAPPING = os.getenv("IS_MAPPING")
 STORAGE_PATH = os.getenv("STORAGE_PATH")
@@ -17,8 +12,20 @@ INPUT_IMU_BIAS_FILE = os.path.join("/", "calib", "imu.json")
 IMU_TYPE = "vectornav"  # or 'xsens'
 LIDAR_TYPE = "robosense"
 
-input_map_name = "" if IS_MAPPING == "1" else f"{STORAGE_PATH}/map.vtk"
-output_map_name = "" if IS_MAPPING != "1" else f"{STORAGE_PATH}/map.vtk"
+if IS_MAPPING is None:
+    print("IS_MAPPING is not set")
+    exit(1)
+elif STORAGE_PATH is None:
+    print("STORAGE_PATH is not set")
+    exit(1)
+
+IS_MAPPING = IS_MAPPING == "1"
+if IS_MAPPING:
+    input_map_name = ""
+    output_map_name = f"{STORAGE_PATH}/map.vtk"
+else:
+    input_map_name = f"{STORAGE_PATH}/map.vtk"
+    output_map_name = ""
 
 
 def generate_launch_description():
@@ -30,6 +37,18 @@ def generate_launch_description():
             "use_sim_time", default_value="true", description="Use simulation time"
         )
     )
+    bias_x = 0.0
+    bias_y = 0.0
+    bias_z = 0.0
+
+    if os.path.exists(INPUT_IMU_BIAS_FILE):
+        with open(INPUT_IMU_BIAS_FILE, "r") as f:
+            bias_data = json.load(f)
+            bias_x = bias_data[IMU_TYPE]["angular_velocities"]["x"]
+            bias_y = bias_data[IMU_TYPE]["angular_velocities"]["y"]
+            bias_z = bias_data[IMU_TYPE]["angular_velocities"]["z"]
+    else:
+        print("No bias file found, using default values")
 
     if IMU_TYPE == "vectornav":
         namespace = LaunchConfiguration("vn100_ns")
@@ -38,19 +57,6 @@ def generate_launch_description():
         )
 
         config_file = os.path.join(share_folder, "config", "_vn100.yaml")
-
-        bias_x = 0.0
-        bias_y = 0.0
-        bias_z = 0.0
-
-        if os.path.exists(INPUT_IMU_BIAS_FILE):
-            with open(INPUT_IMU_BIAS_FILE, "r") as f:
-                bias_data = json.load(f)
-                bias_x = bias_data[IMU_TYPE]["angular_velocities"]["x"]
-                bias_y = bias_data[IMU_TYPE]["angular_velocities"]["y"]
-                bias_z = bias_data[IMU_TYPE]["angular_velocities"]["z"]
-        else:
-            print("No bias file found, using default values")
 
         print(f"Biases: x={bias_x}, y={bias_y}, z={bias_z}")
         bias_compensator_node = Node(
@@ -131,6 +137,8 @@ def generate_launch_description():
         executable="mapper_node",
         name="mapper_node",
         output="screen",
+        sigterm_timeout="30",  # Wait 30 seconds before escalating to SIGTERM
+        sigkill_timeout="5",  # Wait 5 more seconds before SIGKILL
         arguments=[
             "--ros-args",
             "--log-level",
@@ -159,7 +167,7 @@ def generate_launch_description():
                 "map_publish_rate": 10.0,
                 "map_tf_publish_rate": 10.0,
                 "max_idle_time": 10.0,
-                "is_mapping": True if IS_MAPPING == "1" else False,
+                "is_mapping": IS_MAPPING,
                 "is_online": True,
                 "is_3D": True,
                 "save_map_cells_on_hard_drive": True,

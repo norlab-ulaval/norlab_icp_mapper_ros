@@ -44,9 +44,9 @@ def generate_launch_description():
     if os.path.exists(INPUT_IMU_BIAS_FILE):
         with open(INPUT_IMU_BIAS_FILE, "r") as f:
             bias_data = json.load(f)
-            bias_x = bias_data[IMU_TYPE]["angular_velocities"]["x"]
-            bias_y = bias_data[IMU_TYPE]["angular_velocities"]["y"]
-            bias_z = bias_data[IMU_TYPE]["angular_velocities"]["z"]
+            bias_x = bias_data[IMU_TYPE]["angular_velocity"]["x"]
+            bias_y = bias_data[IMU_TYPE]["angular_velocity"]["y"]
+            bias_z = bias_data[IMU_TYPE]["angular_velocity"]["z"]
     else:
         print("No bias file found, using default values")
 
@@ -172,7 +172,7 @@ def generate_launch_description():
                 "is_3D": True,
                 "save_map_cells_on_hard_drive": True,
                 "publish_tfs_between_registrations": True,
-                "deskew": True,
+                "deskew": False,
                 "compression_voxel_size": 0.5,
             }
         ],

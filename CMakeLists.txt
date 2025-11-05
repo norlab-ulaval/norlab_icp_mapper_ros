@@ -19,8 +19,7 @@ find_package(OpenMP REQUIRED)
 find_package(libpointmatcher CONFIG 1.4.3 REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-    "srv/SaveTrajectory.srv"
-    "srv/SaveMap.srv"
+    "srv/Save.srv"
     "srv/LoadMap.srv"
     DEPENDENCIES std_msgs geometry_msgs
 )

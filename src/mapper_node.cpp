@@ -5,9 +5,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
 #include <norlab_icp_mapper/Trajectory.h>
-#include <norlab_icp_mapper_ros/srv/save_map.hpp>
+#include <norlab_icp_mapper_ros/srv/save.hpp>
 #include <norlab_icp_mapper_ros/srv/load_map.hpp>
-#include <norlab_icp_mapper_ros/srv/save_trajectory.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <std_srvs/srv/empty.hpp>
 #include <memory>
@@ -89,13 +88,13 @@ public:
         reloadYamlConfigService = this->create_service<std_srvs::srv::Empty>("reload_yaml_config",
                                                                              std::bind(&MapperNode::reloadYamlConfigCallback, this, std::placeholders::_1,
                                                                                        std::placeholders::_2));
-        saveMapService = this->create_service<norlab_icp_mapper_ros::srv::SaveMap>("save_map",
+        saveMapService = this->create_service<norlab_icp_mapper_ros::srv::Save>("save_map",
                                                                                    std::bind(&MapperNode::saveMapCallback, this, std::placeholders::_1,
                                                                                              std::placeholders::_2));
         loadMapService = this->create_service<norlab_icp_mapper_ros::srv::LoadMap>("load_map",
                                                                                    std::bind(&MapperNode::loadMapCallback, this, std::placeholders::_1,
                                                                                              std::placeholders::_2));
-        saveTrajectoryService = this->create_service<norlab_icp_mapper_ros::srv::SaveTrajectory>("save_trajectory",
+        saveTrajectoryService = this->create_service<norlab_icp_mapper_ros::srv::Save>("save_trajectory",
                                                                                                  std::bind(&MapperNode::saveTrajectoryCallback, this,
                                                                                                            std::placeholders::_1, std::placeholders::_2));
         enableMappingService = this->create_service<std_srvs::srv::Empty>("enable_mapping",
@@ -171,9 +170,9 @@ private:
     PM::TransformationParameters previousRobotToMap;
     rclcpp::Time previousTimeStamp;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reloadYamlConfigService;
-    rclcpp::Service<norlab_icp_mapper_ros::srv::SaveMap>::SharedPtr saveMapService;
+    rclcpp::Service<norlab_icp_mapper_ros::srv::Save>::SharedPtr saveMapService;
     rclcpp::Service<norlab_icp_mapper_ros::srv::LoadMap>::SharedPtr loadMapService;
-    rclcpp::Service<norlab_icp_mapper_ros::srv::SaveTrajectory>::SharedPtr saveTrajectoryService;
+    rclcpp::Service<norlab_icp_mapper_ros::srv::Save>::SharedPtr saveTrajectoryService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr enableMappingService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr disableMappingService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr enableLocalizationService;
@@ -467,15 +466,20 @@ private:
     	mapper->loadYamlConfig(params->mappingConfig);
     }
 
-    void saveMapCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Response> res)
+    void saveMapCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::Save::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::Save::Response> res)
     {
     	try
     	{
     		saveMap(req->map_file_name.data);
+    		res->success = true;
+    		res->message = "Map saved successfully to " + req->map_file_name.data;
+    		RCLCPP_INFO(this->get_logger(), "%s", res->message.c_str());
     	}
     	catch(const std::runtime_error& e)
     	{
-    		RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", e.what());
+    		res->success = false;
+    		res->message = "Unable to save map: " + std::string(e.what());
+    		RCLCPP_ERROR(this->get_logger(), "%s", res->message.c_str());
     	}
     }
 
@@ -487,22 +491,32 @@ private:
             int homogeneousDim = params->is3D ? 4 : 3;
             setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(req->pose, homogeneousDim));
     		robotTrajectory->clear();
+    		res->success = true;
+    		res->message = "Map loaded successfully from " + req->map_file_name.data;
+    		RCLCPP_INFO(this->get_logger(), "%s", res->message.c_str());
     	}
     	catch(const std::runtime_error& e)
     	{
-    		RCLCPP_ERROR(this->get_logger(), "Unable to load: %s", e.what());
+    		res->success = false;
+    		res->message = "Unable to load map: " + std::string(e.what());
+    		RCLCPP_ERROR(this->get_logger(), "%s", res->message.c_str());
     	}
     }
 
-    void saveTrajectoryCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::SaveTrajectory::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::SaveTrajectory::Response> res)
+    void saveTrajectoryCallback(const std::shared_ptr<norlab_icp_mapper_ros::srv::Save::Request> req, std::shared_ptr<norlab_icp_mapper_ros::srv::Save::Response> res)
     {
     	try
     	{
-    		saveTrajectory(req->trajectory_file_name.data);
+    		saveTrajectory(req->map_file_name.data);
+    		res->success = true;
+    		res->message = "Trajectory saved successfully to " + req->map_file_name.data;
+    		RCLCPP_INFO(this->get_logger(), "%s", res->message.c_str());
     	}
     	catch(const std::runtime_error& e)
     	{
-    		RCLCPP_ERROR(this->get_logger(), "Unable to save: %s", e.what());
+    		res->success = false;
+    		res->message = "Unable to save trajectory: " + std::string(e.what());
+    		RCLCPP_ERROR(this->get_logger(), "%s", res->message.c_str());
     	}
     }
 

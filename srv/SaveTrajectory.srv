@@ -1,4 +1,4 @@
-std_msgs/String map_file_name
+string trajectory_file_name
 ---
 bool success
 string message

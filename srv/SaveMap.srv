@@ -1,0 +1,5 @@
+string map_file_name
+bool save_binary
+---
+bool success
+string message

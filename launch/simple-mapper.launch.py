@@ -1,10 +1,11 @@
-import os
 import json
-from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
+import os
+
 from ament_index_python.packages import get_package_share_directory
-from launch.substitutions import LaunchConfiguration
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
 IS_MAPPING = os.getenv("IS_MAPPING")
 STORAGE_PATH = os.getenv("STORAGE_PATH")
@@ -105,32 +106,23 @@ def generate_launch_description():
     elif IMU_TYPE == "xsens":
         raise NotImplementedError("xsens IMU is not yet supported")
 
-    imu_and_wheel_odom_config_file = os.path.join(
-        share_folder, "config", "_imu_and_wheel_odom.yaml"
+    ekf_config_file = os.path.join(
+        share_folder, "config", "_ekf.yaml"
     )
 
-    imu_and_wheel_odom_node = Node(
-        package="norlab_imu_tools",
-        executable="imu_and_wheel_odom_node",
-        name="imu_and_wheel_odom_node",
-        output="log",
-        respawn=True,
-        parameters=[
-            imu_and_wheel_odom_config_file,
-            {
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            },
-        ],
-        remappings=[
-            ("imu_topic", f"{IMU_TYPE}/data"),
-            ("wheel_odom_topic", "/warthog/platform/odom"),
-        ],
-        arguments=[
-            "--ros-args",
-            "--log-level",
-            "warn",
-        ],
-    )
+    ekf_odom_node = Node(
+            package='robot_localization',
+            executable='ekf_node',
+            name='ekf_odom_node',
+            output="screen",
+            respawn=True,
+            parameters=[
+                ekf_config_file
+            ],
+            remappings=[
+                ("/odometry/filtered", "/ekf/odom")
+            ]
+        )
 
     mapping_node = Node(
         package="norlab_icp_mapper_ros",
@@ -184,6 +176,6 @@ def generate_launch_description():
         ],
     )
 
-    ld.add_action(imu_and_wheel_odom_node)
+    ld.add_action(ekf_odom_node)
     ld.add_action(mapping_node)
     return ld

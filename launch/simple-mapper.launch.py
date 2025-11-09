@@ -68,7 +68,12 @@ def generate_launch_description():
             output="both",
             parameters=[
                 config_file,
-                {"bias_x": bias_x, "bias_y": bias_y, "bias_z": bias_z},
+                {
+                    "bias_x": bias_x,
+                    "bias_y": bias_y,
+                    "bias_z": bias_z,
+                    "use_sim_time": LaunchConfiguration("use_sim_time"),
+                },
             ],
             remappings=[
                 ("imu_topic_in", "data_raw"),
@@ -88,7 +93,12 @@ def generate_launch_description():
             name="madgwick_filter",
             namespace=namespace,
             output="both",
-            parameters=[config_file],
+            parameters=[
+                config_file,
+                {
+                    "use_sim_time": LaunchConfiguration("use_sim_time"),
+                }
+            ],
             remappings=[
                 ("imu/data_raw", "data_unbiased"),
                 ("imu/mag", "mag"),
@@ -117,7 +127,10 @@ def generate_launch_description():
             output="screen",
             respawn=True,
             parameters=[
-                ekf_config_file
+                ekf_config_file,
+                {
+                    "use_sim_time": LaunchConfiguration("use_sim_time"),
+                }
             ],
             remappings=[
                 ("/odometry/filtered", "/ekf/odom")

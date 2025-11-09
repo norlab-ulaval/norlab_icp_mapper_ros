@@ -230,6 +230,7 @@ private:
             throw std::runtime_error("Invalid map dimension");
         }
         mapper->setMap(map);
+        RCLCPP_INFO(this->get_logger(), "Map loaded successfully");
     }
 
     void setRobotPose(const PM::TransformationParameters& robotPose)
@@ -628,15 +629,16 @@ int main(int argc, char** argv)
     context->add_on_shutdown_callback(
         [weak_node]() {
             if (auto n = weak_node.lock()) {
-                RCLCPP_INFO(n->get_logger(), "Received a shut down call");
+                std::cout << "[mapper_node] Received a shut down call" << std::endl;
                 n->saveMapOnShutdown();
+                std::cout << "[mapper_node] Shutdown save completed" << std::endl;
             }
         });
 
     try {
         rclcpp::spin(node);
     } catch (const std::exception & e) {
-        RCLCPP_ERROR(node->get_logger(), "Exception: %s", e.what());
+        std::cout << "Exception: " << e.what();
     }
 
     rclcpp::shutdown();

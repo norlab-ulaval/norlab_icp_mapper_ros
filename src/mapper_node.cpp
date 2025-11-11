@@ -151,6 +151,8 @@ public:
     }
 
     void saveMapOnShutdown() {
+        if (params->finalMapFileName.empty())
+            return;
         try {
             RCLCPP_INFO(this->get_logger(), "Node shutting down, saving final map...");
             saveMap(params->finalMapFileName);

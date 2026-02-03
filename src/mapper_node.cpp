@@ -386,7 +386,8 @@ private:
         if(isLocalizing)
         {
             std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-            auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn);
+            bool isFomo = true;
+            auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn, isFomo);
             std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
             RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
             gotInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
@@ -401,7 +402,8 @@ private:
         if(isLocalizing)
         {
             std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-            auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn);
+            bool isFomo = true;
+            auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn, isFomo);
             std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
             RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
             gotInput(input, scanMsgIn.header.frame_id, scanMsgIn.header.stamp);

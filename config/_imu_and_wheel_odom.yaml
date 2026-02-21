@@ -1,0 +1,11 @@
+/**:
+  imu_and_wheel_odom_node:
+    ros__parameters:
+      odom_frame: "odom"
+      base_frame: "base_link"
+      publish_odom: true
+      odom_topic_name: "imu_and_wheel_odom"
+      publish_translation: true
+      wheel_odom_expected_rate: 12.67
+      mag_north_correction_yaw: 0.0 # Value in rads
+      use_sim_time: true

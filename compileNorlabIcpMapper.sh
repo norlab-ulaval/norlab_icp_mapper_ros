@@ -13,7 +13,7 @@ docker run -it \
   -e NAMESPACE="" \
   -e IS_MAPPING=1 \
   -e STORAGE_PATH=/ros2_ws/src/2fast2lamaa/output \
-  norlab/norlabicpmapper /bin/bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && cd /ros2_ws/src/norlab_icp_mapper_ros && colcon build --symlink-install --packages-select norlab_icp_mapper_ros"
+  norlab/norlabicpmapper_offline /bin/bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && cd /ros2_ws/src/norlab_icp_mapper_ros && colcon build --symlink-install --packages-select norlab_icp_mapper_ros"
 
 
   # -v ../../ros_launchers:/root/ASRL/vtr3/src/main/src/ros_launchers \

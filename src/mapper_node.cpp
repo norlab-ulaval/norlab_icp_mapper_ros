@@ -15,6 +15,7 @@
 #include <thread>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <pointmatcher/PointMatcher.h>
+#include <filesystem>
 
 class MapperNode : public rclcpp::Node
 {
@@ -144,6 +145,15 @@ public:
 				}
             );
 
+        RCLCPP_INFO_STREAM(this->get_logger(), "input map filename " << params->finalMapFileName);
+
+        std::filesystem::path mapPath(params->finalMapFileName);
+        std::filesystem::path parentDir = mapPath.parent_path();
+        if (!parentDir.empty() && !std::filesystem::exists(parentDir)) {
+            RCLCPP_INFO(this->get_logger(), "Creating directory: %s", parentDir.c_str());
+            std::filesystem::create_directories(parentDir);
+        }
+
     }
 
     ~MapperNode() {
@@ -155,6 +165,7 @@ public:
             return;
         try {
             RCLCPP_INFO(this->get_logger(), "Node shutting down, saving final map...");
+            saveTrajectory(params->finalTrajectoryFileName);
             saveMap(params->finalMapFileName);
         } catch (const std::exception& e) {
             RCLCPP_ERROR(this->get_logger(), "Failed to save map on shutdown: %s", e.what());

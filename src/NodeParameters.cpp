@@ -1,5 +1,6 @@
 #include "NodeParameters.h"
 #include <fstream>
+#include <filesystem>
 
 NodeParameters::NodeParameters(rclcpp::Node& node)
 {
@@ -72,12 +73,24 @@ void NodeParameters::validateParameters() const
 
 	if(!isOnline)
 	{
+		std::filesystem::path mapPath(finalMapFileName);
+		std::filesystem::path parentDir = mapPath.parent_path();
+		if (!parentDir.empty() && !std::filesystem::exists(parentDir)) {
+			std::filesystem::create_directories(parentDir);
+		}
+
 		std::ofstream mapOfs(finalMapFileName.c_str(), std::ios_base::app);
 		if(!mapOfs.good())
 		{
 			throw std::runtime_error("Invalid final map file: " + finalMapFileName);
 		}
 		mapOfs.close();
+
+		std::filesystem::path trajPath(finalTrajectoryFileName);
+		std::filesystem::path trajParentDir = trajPath.parent_path();
+		if (!trajParentDir.empty() && !std::filesystem::exists(trajParentDir)) {
+			std::filesystem::create_directories(trajParentDir);
+		}
 
 		std::ofstream trajectoryOfs(finalTrajectoryFileName.c_str(), std::ios_base::app);
 		if(!trajectoryOfs.good())

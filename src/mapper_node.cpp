@@ -158,21 +158,34 @@ public:
 
     ~MapperNode() {
         this->saveMapOnShutdown();
+        
+        if (mapperShutdownThread.joinable()) {
+            mapperShutdownThread.join();
+        }
+        if (mapPublisherThread.joinable()) {
+            mapPublisherThread.join();
+        }
+        if (mapTfPublisherThread.joinable()) {
+            mapTfPublisherThread.join();
+        }
     }
 
     void saveMapOnShutdown() {
+        if (hasSavedMap_) return;
         if (params->finalMapFileName.empty())
             return;
         try {
-            RCLCPP_INFO(this->get_logger(), "Node shutting down, saving final map...");
+            RCLCPP_INFO(this->get_logger(), "Node shutting down, saving final map and trajectory...");
             saveTrajectory(params->finalTrajectoryFileName);
             saveMap(params->finalMapFileName);
+            hasSavedMap_ = true;
         } catch (const std::exception& e) {
-            RCLCPP_ERROR(this->get_logger(), "Failed to save map on shutdown: %s", e.what());
+            RCLCPP_ERROR(this->get_logger(), "Failed to save data on shutdown: %s", e.what());
         }
     }
 
 private:
+    bool hasSavedMap_ = false;
     typedef PointMatcher<float> PM;
 
     std::unique_ptr<NodeParameters> params;
@@ -273,10 +286,9 @@ private:
 
             if(idleTime > std::chrono::duration<float>(params->maxIdleTime))
             {
-                saveMap(params->finalMapFileName);
-                saveTrajectory(params->finalTrajectoryFileName);
-                RCLCPP_INFO(this->get_logger(), "Shutting down ROS");
+                RCLCPP_INFO(this->get_logger(), "No input received for %f seconds. Shutting down ROS.", (float)params->maxIdleTime);
                 rclcpp::shutdown();
+                break;
             }
 
             std::this_thread::sleep_for(std::chrono::duration<float>(0.1));

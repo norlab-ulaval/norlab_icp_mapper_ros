@@ -97,6 +97,9 @@ private:
             RCLCPP_INFO(this->get_logger(), "Discovered topic: %s of type %s", topic_metadata.name.c_str(), topic_metadata.type.c_str());
         }
 
+        auto last_scan_time = std::chrono::steady_clock::now();
+        bool first_scan = true;
+
         while (rclcpp::ok() && reader.has_next()) {
             auto bag_message = reader.read_next();
 
@@ -122,6 +125,17 @@ private:
 
             if (publishers.find(topic_name) != publishers.end()) {
                 rclcpp::SerializedMessage serialized_msg(*bag_message->serialized_data);
+                
+                if (topic_name == scan_topic_) {
+                    auto current_time = std::chrono::steady_clock::now();
+                    if (!first_scan) {
+                        auto delay_ms = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_scan_time).count();
+                        std::cout << "Published scan in time: " << delay_ms << " ms" << std::endl;
+                    }
+                    first_scan = false;
+                    last_scan_time = current_time;
+                }
+                
                 publishers[topic_name]->publish(serialized_msg);
             }
         }
@@ -149,6 +163,7 @@ private:
 
 int main(int argc, char** argv)
 {
+    setvbuf(stdout, NULL, _IONBF, BUFSIZ);
     rclcpp::init(argc, argv);
     auto node = std::make_shared<OfflinePlayerNode>();
     

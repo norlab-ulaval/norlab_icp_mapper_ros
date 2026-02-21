@@ -5,6 +5,9 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch.actions import RegisterEventHandler, EmitEvent
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch_ros.actions import Node
 
 IS_MAPPING = os.getenv("IS_MAPPING")
@@ -31,7 +34,7 @@ else:
 
 def generate_launch_description():
     ld = LaunchDescription()
-    share_folder = get_package_share_directory("ros_launchers")
+    share_folder = get_package_share_directory("norlab_icp_mapper_ros")
     launch_folder = os.path.join(share_folder, "launch")
 
     # Bag path argument
@@ -61,6 +64,11 @@ def generate_launch_description():
     )
     ld.add_action(offline_player_node)
 
+    imu_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([os.path.join(launch_folder, "imu.launch.py")])
+    )
+    ld.add_action(imu_launch)
+
     ekf_config_file = os.path.join(share_folder, "config", "_ekf.yaml")
 
     ekf_odom_node = Node(
@@ -79,7 +87,7 @@ def generate_launch_description():
         arguments=[
             "--ros-args",
             "--log-level",
-            "ekf_odom_node:=ERROR"
+            "ERROR"
         ],
         remappings=[("odometry/filtered", "ekf/odom"), ("/tf", ("" if not NAMESPACE else f"/{NAMESPACE}") + "/tf")],
     )
@@ -119,7 +127,7 @@ def generate_launch_description():
                 "final_trajectory_file_name": output_map_name.replace("map.vtk", "trajectory.tum"),
                 "map_publish_rate": 10.0,
                 "map_tf_publish_rate": 10.0,
-                "max_idle_time": 10.0,
+                "max_idle_time": 3.0,
                 "is_mapping": IS_MAPPING,
                 "is_online": False,
                 "is_3D": True,
@@ -140,4 +148,14 @@ def generate_launch_description():
 
     ld.add_action(ekf_odom_node)
     ld.add_action(mapping_node)
+    
+    # Auto-shutdown the launch run when the mapper finishes processing offline scans
+    shutdown_action = RegisterEventHandler(
+        event_handler=OnProcessExit(
+            target_action=mapping_node,
+            on_exit=[EmitEvent(event=Shutdown())]
+        )
+    )
+    ld.add_action(shutdown_action)
+
     return ld

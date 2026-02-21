@@ -55,7 +55,7 @@ public:
         {
             mapperShutdownThread = std::thread(&MapperNode::mapperShutdownLoop, this);
             tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(this->get_clock(), std::chrono::seconds(1000000)));
-            messageQueueSize = 0;
+            messageQueueSize = 100; // Increased buffer size for offline processing
         }
 
         tfListener = std::unique_ptr<tf2_ros::TransformListener>(new tf2_ros::TransformListener(*tfBuffer));

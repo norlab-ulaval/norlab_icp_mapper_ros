@@ -18,6 +18,10 @@ find_package(libpointmatcher_ros 2.0.1 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(libpointmatcher CONFIG 1.4.3 REQUIRED)
+find_package(rosbag2_cpp REQUIRED)
+find_package(rosbag2_storage REQUIRED)
+find_package(rosgraph_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/SaveTrajectory.srv"
@@ -61,7 +65,19 @@ rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typ
 target_link_libraries(mapper_node "${cpp_typesupport_target}")
 ament_export_dependencies(rosidl_default_runtime)
 
-install(TARGETS mapper_node
+add_executable(offline_player_node
+    src/offline_player_node.cpp
+)
+
+ament_target_dependencies(offline_player_node
+    rclcpp
+    rosbag2_cpp
+    rosbag2_storage
+    rosgraph_msgs
+    nav_msgs
+)
+
+install(TARGETS mapper_node offline_player_node
     DESTINATION lib/${PROJECT_NAME}
 )
 

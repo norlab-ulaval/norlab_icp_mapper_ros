@@ -74,6 +74,16 @@ RUN cd /ros2_ws/ \
 
 RUN apt update && apt install -y ros-humble-rosbag2-storage-mcap
 
+# Install Navtech message definitions to play them with ros2 bag play
+RUN mkdir -p /tmp/build_ws/src
+RUN git clone https://bitbucket.org/norlab/navtech_driver.git /navtech_driver \
+    && mv /navtech_driver/ros/ros2/src/navtech_msgs /tmp/build_ws/src/navtech_msgs \
+    && rm -rf /navtech_driver \
+    && cd /tmp/build_ws \
+    && . /opt/ros/humble/setup.sh \
+    && colcon build --install-base /opt/ros/humble --merge-install \
+    && rm -rf /tmp/build_ws
+
 STOPSIGNAL SIGINT
 # add additional commands here
 CMD ["/bin/bash", "-c", "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && ros2 launch --noninteractive ros_launchers norlabIcpMapper.launch.py"]

@@ -54,6 +54,16 @@ RUN cd /opt \
 
 WORKDIR /
 
+# Install Navtech message definitions to play them with ros2 bag play
+RUN mkdir -p /tmp/build_ws/src
+RUN git clone https://bitbucket.org/norlab/navtech_driver.git /navtech_driver \
+    && mv /navtech_driver/ros/ros2/src/navtech_msgs /tmp/build_ws/src/navtech_msgs \
+    && rm -rf /navtech_driver \
+    && cd /tmp/build_ws \
+    && . /opt/ros/humble/setup.sh \
+    && colcon build --install-base /opt/ros/humble --merge-install \
+    && rm -rf /tmp/build_ws
+    
 # create ros workspace and other folders
 RUN mkdir -p /ros2_ws/src
 
@@ -73,16 +83,6 @@ RUN cd /ros2_ws/ \
     && colcon build --symlink-install
 
 RUN apt update && apt install -y ros-humble-rosbag2-storage-mcap
-
-# Install Navtech message definitions to play them with ros2 bag play
-RUN mkdir -p /tmp/build_ws/src
-RUN git clone https://bitbucket.org/norlab/navtech_driver.git /navtech_driver \
-    && mv /navtech_driver/ros/ros2/src/navtech_msgs /tmp/build_ws/src/navtech_msgs \
-    && rm -rf /navtech_driver \
-    && cd /tmp/build_ws \
-    && . /opt/ros/humble/setup.sh \
-    && colcon build --install-base /opt/ros/humble --merge-install \
-    && rm -rf /tmp/build_ws
 
 STOPSIGNAL SIGINT
 # add additional commands here

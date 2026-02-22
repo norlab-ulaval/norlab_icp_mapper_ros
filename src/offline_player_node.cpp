@@ -89,6 +89,13 @@ private:
         std::map<std::string, rclcpp::GenericPublisher::SharedPtr> publishers;
 
         for (const auto& topic_metadata : topics_types) {
+            if (topic_metadata.name.find("tf") == std::string::npos &&
+                topic_metadata.name.find("vectornav") == std::string::npos &&
+                topic_metadata.name.find("robosense") == std::string::npos &&
+                topic_metadata.name.find("odom") == std::string::npos) {
+                continue;
+            }
+
             rclcpp::QoS qos(100);
             if (topic_metadata.name == "/tf_static" || topic_metadata.name == "tf_static") {
                 qos.transient_local();

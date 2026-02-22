@@ -2,16 +2,12 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import (
-    DeclareLaunchArgument,
-    EmitEvent,
-    IncludeLaunchDescription,
-    RegisterEventHandler,
-)
-from launch.event_handlers import OnProcessExit
-from launch.events import Shutdown
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch.actions import RegisterEventHandler, EmitEvent
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch_ros.actions import Node
 
 IS_MAPPING = os.getenv("IS_MAPPING")
@@ -57,11 +53,14 @@ def generate_launch_description():
         name="offline_player_node",
         namespace=NAMESPACE,
         output="screen",
-                "odom_topic": ("" if not NAMESPACE else f"/{NAMESPACE}")
-                + "/estimated_odom",
+        parameters=[
+            {
+                "bag_path": LaunchConfiguration("bag_path"),
+                "scan_topic": f"/{LIDAR_TYPE}/points",
+                "odom_topic": ("" if not NAMESPACE else f"/{NAMESPACE}") + "/estimated_odom",
                 "max_buffer_size": 2,
             }
-        ],
+        ]
     )
     ld.add_action(offline_player_node)
 
@@ -85,11 +84,12 @@ def generate_launch_description():
                 "use_sim_time": True,
             },
         ],
-        arguments=["--ros-args", "--log-level", "ERROR"],
-        remappings=[
-            ("odometry/filtered", "ekf/odom"),
-            ("/tf", ("" if not NAMESPACE else f"/{NAMESPACE}") + "/tf"),
+        arguments=[
+            "--ros-args",
+            "--log-level",
+            "ERROR"
         ],
+        remappings=[("odometry/filtered", "ekf/odom"), ("/tf", ("" if not NAMESPACE else f"/{NAMESPACE}") + "/tf")],
     )
 
     mapping_node = Node(
@@ -124,9 +124,7 @@ def generate_launch_description():
                 "initial_map_file_name": input_map_name,
                 "initial_robot_pose": "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]",
                 "final_map_file_name": output_map_name,
-                "final_trajectory_file_name": output_map_name.replace(
-                    "map.vtk", "trajectory.tum"
-                ),
+                "final_trajectory_file_name": output_map_name.replace("map.vtk", "trajectory.tum"),
                 "map_publish_rate": 10.0,
                 "map_tf_publish_rate": 10.0,
                 "max_idle_time": 100.0,
@@ -150,11 +148,8 @@ def generate_launch_description():
 
     ld.add_action(ekf_odom_node)
     ld.add_action(mapping_node)
-
+    
     # Auto-shutdown the launch run when the mapper finishes processing offline scans
-    shutdown_action = RegisterEventHandler(
-        event_handler=OnProcessExit(
-            target_action=mapping_node, on_exit=[EmitEvent(event=Shutdown())]
     shutdown_action = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=mapping_node,

@@ -1,4 +1,3 @@
-@@ -0,0 +1,43 @@
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <random>

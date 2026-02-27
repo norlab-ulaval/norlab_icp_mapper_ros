@@ -61,7 +61,16 @@ rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typ
 target_link_libraries(mapper_node "${cpp_typesupport_target}")
 ament_export_dependencies(rosidl_default_runtime)
 
-install(TARGETS mapper_node
+add_executable(wheel_velocity_noise
+    src/wheel_velocity_noise.cpp
+)
+
+ament_target_dependencies(wheel_velocity_noise
+    rclcpp
+    nav_msgs
+)
+
+install(TARGETS mapper_node wheel_velocity_noise
     DESTINATION lib/${PROJECT_NAME}
 )
 

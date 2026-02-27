@@ -74,6 +74,21 @@ def generate_launch_description():
     )
     ld.add_action(imu_launch)
 
+    ld.add_action(
+        Node(
+            package="norlab_icp_mapper_ros",
+            executable="wheel_velocity_noise",
+            name="wheel_velocity_noise",
+            namespace=NAMESPACE,
+            output="screen",
+            parameters=[
+                {
+                "use_sim_time": True,
+                }
+            ],
+        )
+    )
+
     ekf_config_file = os.path.join(share_folder, "config", "_ekf.yaml")
 
     ekf_odom_node = Node(

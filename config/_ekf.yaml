@@ -37,7 +37,7 @@
           0.0,
         ]
 
-      odom0: /warthog/platform/odom
+      odom0: /warthog/platform/odom_noisy
       odom0_config: [
           false,
           false,

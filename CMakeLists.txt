@@ -77,7 +77,16 @@ ament_target_dependencies(offline_player_node
     nav_msgs
 )
 
-install(TARGETS mapper_node offline_player_node
+add_executable(wheel_velocity_noise
+    src/wheel_velocity_noise.cpp
+)
+
+ament_target_dependencies(wheel_velocity_noise
+    rclcpp
+    nav_msgs
+)
+
+install(TARGETS mapper_node offline_player_node wheel_velocity_noise
     DESTINATION lib/${PROJECT_NAME}
 )
 

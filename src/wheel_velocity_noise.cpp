@@ -20,11 +20,11 @@ private:
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
     {
         auto noisy_msg = *msg;
-        
+
         // Apply random gaussian noise to the x velocity component
         double noise = distribution_(generator_);
-        noisy_msg.twist.twist.linear.x += noise;
-        
+        noisy_msg.twist.twist.linear.x += 3*noise;
+
         publisher_->publish(noisy_msg);
     }
 

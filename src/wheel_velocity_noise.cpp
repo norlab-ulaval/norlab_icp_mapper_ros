@@ -7,9 +7,11 @@ class WheelVelocityNoiseNode : public rclcpp::Node
 public:
     WheelVelocityNoiseNode()
     : Node("wheel_velocity_noise_node"),
-      generator_(std::random_device{}()),
       distribution_(-0.2, 0.2) // mean = -0.2, stddev = 0.2
     {
+        this->declare_parameter<int>("seed", 42);
+        int seed = this->get_parameter("seed").as_int();
+        generator_.seed(seed);
         publisher_ = this->create_publisher<nav_msgs::msg::Odometry>("/warthog/platform/odom_noisy", 10);
         subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
             "/warthog/platform/odom", 10,

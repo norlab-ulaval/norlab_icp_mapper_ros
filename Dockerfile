@@ -1,4 +1,4 @@
-FROM ros:humble-ros-base
+FROM ros:jazzy-ros-base
 
 SHELL ["/bin/bash", "-c"]
 
@@ -20,7 +20,7 @@ RUN apt clean\
     libomp-dev libboost-all-dev libeigen3-dev libyaml-cpp-dev \
     python3-pip \
     curl gnupg lsb-release \
-    ros-humble-robot-localization \
+    ros-jazzy-robot-localization \
     && apt clean
 
 WORKDIR /
@@ -54,16 +54,6 @@ RUN cd /opt \
 
 WORKDIR /
 
-# Install Navtech message definitions to play them with ros2 bag play
-RUN mkdir -p /tmp/build_ws/src
-RUN git clone https://bitbucket.org/norlab/navtech_driver.git /navtech_driver \
-    && mv /navtech_driver/ros/ros2/src/navtech_msgs /tmp/build_ws/src/navtech_msgs \
-    && rm -rf /navtech_driver \
-    && cd /tmp/build_ws \
-    && . /opt/ros/humble/setup.sh \
-    && colcon build --install-base /opt/ros/humble --merge-install \
-    && rm -rf /tmp/build_ws
-    
 # create ros workspace and other folders
 RUN mkdir -p /ros2_ws/src
 
@@ -71,19 +61,21 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o 
 RUN git clone https://github.com/norlab-ulaval/imu_tools.git -b fomo /ros2_ws/src/imu_tools
 RUN git clone https://github.com/norlab-ulaval/norlab_imu_tools.git -b fomo /ros2_ws/src/norlab_imu_tools
 RUN git clone https://github.com/norlab-ulaval/libpointmatcher_ros.git -b fomo /ros2_ws/src/libpointmatcher_ros
-RUN git clone https://github.com/norlab-ulaval/norlab_icp_mapper_ros.git -b fomo /ros2_ws/src/norlab_icp_mapper_ros
-RUN git clone https://github.com/norlab-ulaval/fomo-bench.git -b ros2 /tmp/fomo-bench \
-    && mv /tmp/fomo-bench/ros_launchers /ros2_ws/src/ros_launchers
+RUN git clone https://github.com/norlab-ulaval/imu_odom.git /ros2_ws/src/imu_odom
+RUN git clone https://github.com/norlab-ulaval/norlab_icp_mapper_ros.git -b mtt /ros2_ws/src/norlab_icp_mapper_ros
 
 RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
 RUN rosdep update
 RUN rosdep install --from-paths /ros2_ws/src --ignore-src -r -y
 RUN cd /ros2_ws/ \
-    && source /opt/ros/humble/setup.bash \
+    && source /opt/ros/jazzy/setup.bash \
     && colcon build --symlink-install
 
-RUN apt update && apt install -y ros-humble-rosbag2-storage-mcap
+RUN apt update && apt install -y ros-jazzy-rosbag2-storage-mcap ros-jazzy-foxglove-bridge
+
+RUN echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
+RUN echo "source /ros2_ws/install/setup.bash" >> ~/.bashrc
 
 STOPSIGNAL SIGINT
 # add additional commands here
-CMD ["/bin/bash", "-c", "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && ros2 launch --noninteractive ros_launchers norlabIcpMapper.launch.py"]
+CMD ["/bin/bash", "-c", "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && ros2 launch --noninteractive norlab_icp_mapper_ros mtt_mapper.launch.py bag_path:=/rosbag"]

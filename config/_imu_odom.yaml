@@ -1,0 +1,8 @@
+/**:
+    imu_odom:
+        ros__parameters:
+            odom_frame: "odom"
+            robot_frame: "base_footprint"
+            imu_frame: "mti100"
+            real_time: false
+            use_altitude: false

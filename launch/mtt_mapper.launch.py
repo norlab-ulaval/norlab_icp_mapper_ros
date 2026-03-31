@@ -2,28 +2,14 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch.actions import RegisterEventHandler, EmitEvent
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch_ros.actions import Node
-
-IS_MAPPING = 1
-STORAGE_PATH = "/tmp"
-NAMESPACE = os.getenv("NAMESPACE")
-
-if IS_MAPPING is None:
-    print("IS_MAPPING is not set")
-    exit(1)
-elif STORAGE_PATH is None:
-    print("STORAGE_PATH is not set")
-    exit(1)
-
-IS_MAPPING = True
-input_map_name = ""
-output_map_name = f"{STORAGE_PATH}/map.vtk"
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 
 
 def generate_launch_description():
@@ -38,32 +24,37 @@ def generate_launch_description():
         )
     )
 
-    # Note: we are enforcing use_sim_time=true for offline playback
-    # Instead of exposing use_sim_time, we hardcode it to true for the nodes.
+    output_path = LaunchConfiguration('output_path')
 
-    offline_player_node = Node(
-        package="norlab_icp_mapper_ros",
-        executable="offline_player_node",
-        name="offline_player_node",
-        namespace=NAMESPACE,
-        output="screen",
-        parameters=[
-            {
-                "use_sim_time": True,
-                "bag_path": LaunchConfiguration("bag_path"),
-                "odom_topic": ("" if not NAMESPACE else f"/{NAMESPACE}") + "/estimated_odom",
-                "max_buffer_size": 2,
-            }
-        ]
-    )
-    ld.add_action(offline_player_node)
+    # 2. Standard Rosbag Play Node
+    rosbag_play_cmd = ExecuteProcess(
+            cmd=[
+                'ros2', 'bag', 'play',
+                LaunchConfiguration('bag_path'),
+                '--rate', '1.0',
+                '--clock',
+                '--storage', 'mcap',
+                # Add your exclusions here if needed:
+                '--exclude-topics', '/mapping/icp_odom', '/mapping/map', '/tf'
+            ],
+            output='screen'
+        )
+
+    ld.add_action(rosbag_play_cmd)
+
+    play_rate_control_node = Node(
+            package="norlab_icp_mapper_ros",
+            executable="slow_down_playbag.py", # Notice we use the filename
+            name="bag_speed_manager",
+            parameters=[{"use_sim_time": True}]
+        )
+    ld.add_action(play_rate_control_node)
 
     odom_config_file = os.path.join(share_folder, "config", "_imu_odom.yaml")
     imu_odom_node = Node(
         package="imu_odom",
         executable="imu_odom_node",
         name="imu_odom",
-        namespace=NAMESPACE,
         output="screen",
         parameters=[
             {
@@ -85,10 +76,9 @@ def generate_launch_description():
         package="norlab_icp_mapper_ros",
         executable="mapper_node",
         name="mapper_node",
-        namespace=NAMESPACE,
         output="screen",
-        sigterm_timeout="600",  # Wait 60 seconds before escalating to SIGTERM
-        sigkill_timeout="100",  # Wait 10 more seconds before SIGKILL
+        sigterm_timeout="60",  # Wait 60 seconds before escalating to SIGTERM
+        sigkill_timeout="10",  # Wait 10 more seconds before SIGKILL
         arguments=[
             "--ros-args",
             "--log-level",
@@ -110,14 +100,20 @@ def generate_launch_description():
                     "config",
                     f"_mapper.yaml",
                 ),
-                "initial_map_file_name": input_map_name,
+                "initial_map_file_name": "",
                 "initial_robot_pose": "[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]",
-                "final_map_file_name": output_map_name,
-                "final_trajectory_file_name": output_map_name.replace("map.vtk", "trajectory.tum"),
+                "final_map_file_name": PathJoinSubstitution([
+                    LaunchConfiguration("bag_path"),
+                    "map.vtk"
+                ]),
+                "final_trajectory_file_name": PathJoinSubstitution([
+                    LaunchConfiguration("bag_path"),
+                    "trajectory.tum"
+                ]),
                 "map_publish_rate": 10.0,
                 "map_tf_publish_rate": 10.0,
-                "max_idle_time": 100.0,
-                "is_mapping": IS_MAPPING,
+                "max_idle_time": 5.0,
+                "is_mapping": True,
                 "is_online": False,
                 "is_3D": True,
                 "save_map_cells_on_hard_drive": False,
@@ -135,25 +131,6 @@ def generate_launch_description():
     )
 
     ld.add_action(mapping_node)
-
-    foxglove_node = Node(
-            package='foxglove_bridge',
-            name='foxglove_bridge',
-            executable='foxglove_bridge',
-            namespace=NAMESPACE,
-            output="screen",
-            arguments=[
-                "--ros-args",
-                "--log-level",
-                "warning",
-            ],
-            parameters=[{
-                "port": 8766,
-                "use_sim_time": True,
-            }],
-
-        )
-    # ld.add_action(foxglove_node)
 
     # Auto-shutdown the launch run when the mapper finishes processing offline scans
     shutdown_action = RegisterEventHandler(

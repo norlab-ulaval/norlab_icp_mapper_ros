@@ -72,9 +72,17 @@ public:
         {
             robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
             odomToMap = PM::Matrix::Identity(4, 4);
-            pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", messageQueueSize,
-                                                                                               std::bind(&MapperNode::pointCloud2Callback, this,
-                                                                                                         std::placeholders::_1));
+            hesaiSubscription = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                "/hesai_lidar/points", messageQueueSize,
+                [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+                    pointCloud2Callback(*msg, false);
+                });
+
+            domeSubscription = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                "/rsairy_ns/points", messageQueueSize,
+                [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+                    pointCloud2Callback(*msg, true);
+                });
         }
         else
         {
@@ -154,11 +162,14 @@ public:
             std::filesystem::create_directories(parentDir);
         }
 
+        dome_pointcloud = PM::DataPoints();
+        rigidTrans = PM::get().REG(Transformation).create("RigidTransformation");
+
     }
 
     ~MapperNode() {
         this->saveMapOnShutdown();
-        
+
         if (mapperShutdownThread.joinable()) {
             mapperShutdownThread.join();
         }
@@ -206,7 +217,8 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr inputFiltersScanPublisher;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr deskewingScanPublisher;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr hesaiSubscription;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr domeSubscription;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr relocalizePoseSubscription;
     PM::TransformationParameters previousRobotToMap;
@@ -228,6 +240,11 @@ private:
 
     bool isLocalizing;
     std::mutex isLocalizingLock;
+    std::mutex gotInputLock;
+    PM::DataPoints dome_pointcloud;
+    rclcpp::Time dome_scan_time;
+    std::string dome_frame = "";
+    std::shared_ptr<PM::Transformation> rigidTrans;
 
     std::unique_ptr<Deskewer> deskewer;
 
@@ -267,8 +284,16 @@ private:
 
     void saveTrajectory(const std::string& trajectoryFileName)
     {
-        RCLCPP_INFO(this->get_logger(), "Saving trajectory to %s", trajectoryFileName.c_str());
-        robotTrajectory->save(trajectoryFileName);
+        namespace fs = std::filesystem;
+        fs::path trajPath(trajectoryFileName);
+
+        // 1. Save the original (e.g., .tum)
+        RCLCPP_INFO(this->get_logger(), "Saving trajectory to %s", trajPath.c_str());
+        robotTrajectory->save(trajPath.string());
+
+        // 2. Change extension to .vtk and save
+        trajPath.replace_extension(".vtk");
+        robotTrajectory->save(trajPath.string());
     }
 
     void mapperShutdownLoop()
@@ -307,6 +332,32 @@ private:
         std::chrono::steady_clock::time_point processingStartTime = std::chrono::steady_clock::now();
         try
         {
+            // if the dome point cloud is available, concatenate the two point clouds
+            // this removes the timestamps field
+            if (dome_pointcloud.features.cols() > 0)
+            {
+                RCLCPP_DEBUG_STREAM(this->get_logger(), "Concatenating dome point cloud with input point cloud. Nb points before: " << input.features.cols());
+                // transform the dome point cloud to the hesai frame
+                PM::TransformationParameters domeToHesai = findTransform(dome_frame, sensorFrame, timeStamp, input.getHomogeneousDim());
+                PM::DataPoints dome_pointcloud_hesai = rigidTrans->compute(dome_pointcloud, domeToHesai);
+
+                // move the dome point cloud to the input timestamp
+                // TODO we choose to ignore this because the tfs are minimal given the robot's speed
+                // RCLCPP_DEBUG_STREAM(this->get_logger(), "Getting for sensor movement between dome " << dome_scan_time.nanoseconds() << " and hesai " << timeStamp.nanoseconds() << ". The time diff is " << (timeStamp - dome_scan_time).nanoseconds() << " (ns)");
+
+                // geometry_msgs::msg::TransformStamped transform = tfBuffer->lookupTransform(sensorFrame,
+                //                                         dome_scan_time,
+                //                                         sensorFrame,
+                //                                         timeStamp,
+                //                                         "odom",
+                //                                         rclcpp::Duration(0, 2.5e8));
+                // auto tf = PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(transform, input.getHomogeneousDim());
+                // RCLCPP_DEBUG_STREAM(this->get_logger(), "The tf is\n" << tf);
+
+                input.concatenate(dome_pointcloud_hesai);
+                dome_pointcloud.features.resize(0, 0);
+                RCLCPP_DEBUG_STREAM(this->get_logger(), "Nb points after: " << input.features.cols());
+            }
             mapper->applyInputFilters(input);
             std::chrono::steady_clock::time_point filterEndTime = std::chrono::steady_clock::now();
             RCLCPP_DEBUG_STREAM(this->get_logger(), "Applied input filters in " << std::chrono::duration_cast<std::chrono::milliseconds>(filterEndTime - processingStartTime).count() << " [ms]");
@@ -402,18 +453,26 @@ private:
 
     }
 
-    void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
+    void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn, const bool is_dome)
     {
-        RCLCPP_DEBUG(this->get_logger(), "----POINT CLOUD RECEIVED----");
+        RCLCPP_DEBUG(this->get_logger(), "----POINT CLOUD RECEIVED FROM %s ----", is_dome ? "DOME" : "HESAI");
         isLocalizingLock.lock();
+        bool isFomo = false;
         if(isLocalizing)
         {
-            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-            bool isFomo = true;
-            auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn, isFomo);
-            std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-            RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
-            gotInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+            if (is_dome) {
+                dome_frame = cloudMsgIn.header.frame_id;
+                dome_scan_time = cloudMsgIn.header.stamp;
+                dome_pointcloud = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn, isFomo);
+            }
+            else {
+                std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+                auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn, isFomo);
+                std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+                RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
+                std::lock_guard<std::mutex> lock(gotInputLock); // serialize both sensors
+                gotInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+            }
         }
         isLocalizingLock.unlock();
     }

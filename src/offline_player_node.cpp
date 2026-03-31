@@ -89,10 +89,10 @@ private:
         std::map<std::string, rclcpp::GenericPublisher::SharedPtr> publishers;
 
         for (const auto& topic_metadata : topics_types) {
-            if (topic_metadata.name.find("tf") == std::string::npos &&
-                topic_metadata.name.find("vectornav") == std::string::npos &&
-                topic_metadata.name.find("robosense") == std::string::npos &&
-                topic_metadata.name.find("odom") == std::string::npos) {
+            if (topic_metadata.name.find("tf_static") == std::string::npos &&
+                topic_metadata.name.find("mti") == std::string::npos &&
+                topic_metadata.name.find("hesai") == std::string::npos &&
+                topic_metadata.name.find("rsairy") == std::string::npos) {
                 continue;
             }
 
@@ -106,44 +106,59 @@ private:
 
         auto last_scan_time = std::chrono::steady_clock::now();
         bool first_scan = true;
+        rclcpp::Time max_published_time_{0, 0, RCL_ROS_TIME};
 
-        while (rclcpp::ok() && reader.has_next()) {
-            auto bag_message = reader.read_next();
+        while (rclcpp::ok() && reader.has_next()) {auto bag_message = reader.read_next();
+            rclcpp::Time current_msg_time(bag_message->send_timestamp, RCL_ROS_TIME);
+
+            // This prevents the "jump back" warning caused by out-of-order bag messages.
+            if (current_msg_time > max_published_time_) {
+                rosgraph_msgs::msg::Clock clock_msg;
+                clock_msg.clock = current_msg_time;
+                clock_pub_->publish(clock_msg);
+                max_published_time_ = current_msg_time;
+            }
 
             // Publish clock
             rosgraph_msgs::msg::Clock clock_msg;
-            clock_msg.clock.sec = bag_message->time_stamp / 1000000000LL;
-            clock_msg.clock.nanosec = bag_message->time_stamp % 1000000000LL;
+            clock_msg.clock.sec = bag_message->send_timestamp / 1000000000LL;
+            clock_msg.clock.nanosec = bag_message->send_timestamp % 1000000000LL;
             clock_pub_->publish(clock_msg);
 
             std::string topic_name = bag_message->topic_name;
 
-            if (topic_name == scan_topic_) {
+            if (topic_name.find("/hesai/points") != std::string::npos) {
                 if (scans_skipped_ < 10) {
                     scans_skipped_++;
                     continue; // Skip the first 10 scans to let TF buffer fill
                 }
 
+                int ctr = 0;
                 while (rclcpp::ok() && scans_in_flight_ >= max_buffer_size_) {
                     std::this_thread::sleep_for(20ms);
+                    // ctr++;
+                    // if (ctr > 10) {
+                    //     RCLCPP_WARN_STREAM(this->get_logger(), "Max buffer size reached, continue publishing");
+                    //     break;
+                    // }
                 }
-                scans_in_flight_++;
             }
 
             if (publishers.find(topic_name) != publishers.end()) {
                 rclcpp::SerializedMessage serialized_msg(*bag_message->serialized_data);
-                
-                if (topic_name == scan_topic_) {
+
+                if (topic_name.find("/points") != std::string::npos) {
                     auto current_time = std::chrono::steady_clock::now();
                     if (!first_scan) {
                         auto delay_ms = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_scan_time).count();
-                        std::cout << "Published scan in time: " << delay_ms << " ms" << std::endl;
+                        RCLCPP_DEBUG(this->get_logger(), "Published scan in time: %ld ms", delay_ms);
                     }
                     first_scan = false;
                     last_scan_time = current_time;
                 }
-                
+
                 publishers[topic_name]->publish(serialized_msg);
+                std::this_thread::sleep_for(2ms);
             }
         }
 
@@ -173,7 +188,7 @@ int main(int argc, char** argv)
     setvbuf(stdout, NULL, _IONBF, BUFSIZ);
     rclcpp::init(argc, argv);
     auto node = std::make_shared<OfflinePlayerNode>();
-    
+
     // Use multi-threaded executor to allow playback and subscription callbacks concurrently
     rclcpp::executors::MultiThreadedExecutor executor;
     executor.add_node(node);

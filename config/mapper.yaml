@@ -1,51 +1,55 @@
+# Legacy fallback config. Prefer _mapper.yaml for production use.
+# Critical fixes applied (branch: mohamed):
+#   - maxDist: 200.0 → 2.0  (was causing false long-range correspondences and drift)
+#   - updateCondition: delay→distance  (time-based caused large odom gaps at speed)
+#   - Removed readingDataPointsFilters double-sampling
+#   - Added BoundingBox self-filters (chassis + sensor pod)
+#   - Added post SurfaceNormalDataPointsFilter (required by PointToPlane ICP)
+#   - Added BoundTransformationChecker safety net
+
 mapper:
   updateCondition:
-    type: delay
-    value: 0.5
+    type: distance
+    value: 0.15
 
-  sensorMaxRange: 100
+  sensorMaxRange: 60.0
 
   mapperModule:
     - PointDistanceMapperModule:
-        minDistNewPoint: 0.1
+        minDistNewPoint: 0.05
 
 input:
+  - BoundingBoxDataPointsFilter:
+      xMin: -0.90
+      xMax:  0.70
+      yMin: -0.40
+      yMax:  0.40
+      zMin: -0.10
+      zMax:  0.80
+      removeInside: 1
+
+  - BoundingBoxDataPointsFilter:
+      xMin: -0.25
+      xMax:  0.15
+      yMin: -0.20
+      yMax:  0.20
+      zMin:  0.70
+      zMax:  1.10
+      removeInside: 1
+
   - RandomSamplingDataPointsFilter:
       prob: 0.8
 
-  - AddDescriptorDataPointsFilter:
-      descriptorName: probabilityDynamic
-      descriptorDimension: 1
-      descriptorValues: [0.6]
-
-  - SamplingSurfaceNormalDataPointsFilter:
-      ratio: 0.5
-      knn: 7
-      samplingMethod: 0
-      maxBoxDim: inf
-      averageExistingDescriptors: 1
-      keepNormals: 1
-      keepDensities: 0
-      keepEigenValues: 0
-      keepEigenVectors: 0
-
 icp:
-  readingDataPointsFilters:
-    - RandomSamplingDataPointsFilter:
-        prob: 0.8
-
-  referenceDataPointsFilters:
-
   outlierFilters:
     - TrimmedDistOutlierFilter:
         ratio: 0.75
 
   matcher:
     KDTreeMatcher:
-      knn: 3
+      knn: 5
       epsilon: 1
-      searchType: 1
-      maxDist: 200.0
+      maxDist: 2.0
 
   errorMinimizer:
     PointToPlaneErrorMinimizer:
@@ -56,11 +60,16 @@ icp:
         maxIterationCount: 40
     - DifferentialTransformationChecker:
         minDiffRotErr: 0.001
-        minDiffTransErr: 0.001
+        minDiffTransErr: 0.01
         smoothLength: 3
+    - BoundTransformationChecker:
+        maxRotationNorm: 0.5
+        maxTranslationNorm: 2.0
 
   inspector: NullInspector
 
   logger: NullLogger
 
 post:
+  - SurfaceNormalDataPointsFilter:
+      knn: 10

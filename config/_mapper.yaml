@@ -1,0 +1,139 @@
+# ════════════════════════════════════════════════════════════════════════════════
+# _mapper.yaml — norlab_icp_mapper_ros / branch: mohamed
+#
+# Standalone ICP mapping config for MTT-154 with single Hesai XT-32.
+# When running WITH cloud_merger (dual LiDAR), use:
+#   norlab_robot/config/mapping/_config.yaml          (live)
+#   norlab_robot/config/mapping/_config_replay_dense.yaml  (replay)
+#   norlab_robot/config/mapping/_config_replay_max_quality.yaml  (post-processing)
+#
+# Key differences from upstream mtt branch _mapper.yaml:
+#   - Dynamic object tracking enabled (operator removal)
+#   - Sampling ratio 0.9 instead of 0.3 (keep more detail)
+#   - BoundTransformationChecker (safety net against runaway registrations)
+#   - minDistNewPoint 0.05 m (5 cm map resolution vs 10 cm)
+#   - knn 7 (more robust correspondence in outdoor structure)
+# ════════════════════════════════════════════════════════════════════════════════
+
+mapper:
+  updateCondition:
+    type:  distance
+    value: 0.10   # register every 10 cm of travel (was delay=0.5 s in 2.1.1)
+
+  sensorMaxRange: 60.0   # Hesai XT-32 reliable outdoor range
+
+  mapperModule:
+    # ── Dynamic object removal ────────────────────────────────────────────────
+    # Tracks per-point dynamic probability across map updates using ray-casting.
+    # Static structure converges toward p≈0 (never removed).
+    # Moving objects (operator, vehicles) converge toward p≈1 (removed by post filter).
+    # alpha=0.85: fast flagging — operator removed after ~4-6 updates (≈0.4-0.6 m travel).
+    # beta=0.99:  static structure is very sticky (false positives are slow to accumulate).
+    - DynamicPointsMapperModule:
+        thresholdDynamic: 0.75
+        alpha: 0.85
+        beta: 0.99
+        beamHalfAngle: 0.017453292   # 1° — matches Hesai XT-32 angular resolution
+        epsilonA: 0.01
+        epsilonD: 0.01
+
+    # Map resolution guard: reject new points closer than 5 cm to existing map points.
+    - PointDistanceMapperModule:
+        minDistNewPoint: 0.05
+
+input:
+  # ── Self-filter: tractor chassis (base_link frame) ─────────────────────────
+  # Removes Hesai returns from the tractor body and tracks.
+  # base_link is 10 cm above base_footprint: z=-0.10 = ground level.
+  # Verified against mtt_description URDF and cloud_merger bounding boxes.
+  - BoundingBoxDataPointsFilter:
+      xMin: -0.90
+      xMax:  0.70
+      yMin: -0.40
+      yMax:  0.40
+      zMin: -0.10
+      zMax:  0.80
+      removeInside: 1
+
+  # ── Self-filter: LiDAR cage / sensor mounting pod ──────────────────────────
+  - BoundingBoxDataPointsFilter:
+      xMin: -0.25
+      xMax:  0.15
+      yMin: -0.20
+      yMax:  0.20
+      zMin:  0.70
+      zMax:  1.10
+      removeInside: 1
+
+  # ── Self-filter: trailer body (when trailer is attached) ───────────────────
+  # Hitch pivot at base_link x=-1.45, trailer rear at x≈-3.35, half-width 0.40 m.
+  # +0.25 m margin on all sides. Remove to prevent trailer from polluting the map.
+  - BoundingBoxDataPointsFilter:
+      xMin: -3.60
+      xMax: -0.95
+      yMin: -0.85
+      yMax:  0.85
+      zMin: -0.20
+      zMax:  1.30
+      removeInside: 1
+
+  # High-quality sampling: keep 90% of the Hesai scan.
+  # (mtt branch used 0.3 — too aggressive, loses fine structure)
+  - RandomSamplingDataPointsFilter:
+      prob: 0.9
+
+  # Required for DynamicPointsMapperModule ray-casting.
+  - ObservationDirectionDataPointsFilter:
+
+  # Seed points with initial dynamic probability 0.6.
+  - AddDescriptorDataPointsFilter:
+      descriptorName: probabilityDynamic
+      descriptorDimension: 1
+      descriptorValues: [0.6]
+
+icp:
+  matcher:
+    KDTreeMatcher:
+      knn: 7          # 7 neighbours: more robust than 5 on sparse outdoor scans
+      epsilon: 1
+      maxDist: 2.0    # CRITICAL: was 200.0 in upstream 2.1.1 → caused false matches.
+                      # 2.0 m prevents long-range false correspondences.
+
+  outlierFilters:
+    - TrimmedDistOutlierFilter:
+        ratio: 0.75   # reject worst 25% correspondences
+
+  errorMinimizer:
+    PointToPlaneErrorMinimizer:
+      # Ground vehicle: constrain roll/pitch for stability on flat/slightly uneven terrain.
+      force4DOF: 1
+
+  transformationCheckers:
+    - DifferentialTransformationChecker:
+        minDiffRotErr: 0.001
+        minDiffTransErr: 0.01
+        smoothLength: 4
+    - CounterTransformationChecker:
+        maxIterationCount: 50
+    # Safety net: abort runaway ICP registrations immediately.
+    - BoundTransformationChecker:
+        maxRotationNorm: 0.5    # 28° per step hard cap
+        maxTranslationNorm: 2.0
+
+  inspector: NullInspector
+
+  logger: NullLogger
+
+post:
+  # Remove dynamic objects from the accumulated map.
+  # threshold=0.70: slightly aggressive for outdoor operator scenarios.
+  - CutAtDescriptorThresholdDataPointsFilter:
+      descName: probabilityDynamic
+      useLargerThan: 1
+      threshold: 0.70
+
+  # Compute surface normals on the map cloud.
+  # REQUIRED by PointToPlaneErrorMinimizer for accurate normal-based alignment.
+  # knn=12 gives smoother normals on outdoor terrain.
+  - SurfaceNormalDataPointsFilter:
+      knn: 12

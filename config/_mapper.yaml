@@ -55,7 +55,7 @@ input:
       zMax:  0.80
       removeInside: 1
 
-  # ── Self-filter: LiDAR cage / sensor mounting pod ──────────────────────────
+  # ── Self-filter: Hesai XT-32 cage (sensor pod, y≈-0.05 in base_link) ──────────
   - BoundingBoxDataPointsFilter:
       xMin: -0.25
       xMax:  0.15
@@ -65,12 +65,25 @@ input:
       zMax:  1.10
       removeInside: 1
 
+  # ── Self-filter: RS-Airy mount (calibrated 2026-04-21) ───────────────────────
+  # rsairy in base_link: x≈-0.04  y≈+0.80  z≈+0.86 (GICP calib, RMSE 3 cm).
+  # Without this the Hesai sees the RS-Airy housing at ~0.85 m and injects
+  # a ghost blob at every robot position into the map.
+  - BoundingBoxDataPointsFilter:
+      xMin: -0.20
+      xMax:  0.12
+      yMin:  0.65
+      yMax:  0.95
+      zMin:  0.70
+      zMax:  1.05
+      removeInside: 1
+
   # ── Self-filter: trailer body (when trailer is attached) ───────────────────
-  # Hitch pivot at base_link x=-1.45, trailer rear at x≈-3.35, half-width 0.40 m.
-  # +0.25 m margin on all sides. Remove to prevent trailer from polluting the map.
+  # Hitch at x=-1.45. Rear at x≈-3.35, half-width 0.40 m, +0.25 m margin.
+  # xMax=-0.88: closes the 5 cm gap with chassis xMin=-0.90.
   - BoundingBoxDataPointsFilter:
       xMin: -3.60
-      xMax: -0.95
+      xMax: -0.88
       yMin: -0.85
       yMax:  0.85
       zMin: -0.20

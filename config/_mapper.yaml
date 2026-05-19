@@ -78,16 +78,21 @@ input:
       zMax:  1.05
       removeInside: 1
 
-  # ── Self-filter: trailer body (when trailer is attached) ───────────────────
+  # ── Self-filter: trailer body + seated operator (when trailer is attached) ───
   # Hitch at x=-1.45. Rear at x≈-3.35, half-width 0.40 m, +0.25 m margin.
   # xMax=-0.88: closes the 5 cm gap with chassis xMin=-0.90.
+  # zMax=2.20: covers a tall seated operator (~2.0 m above ground incl. seat height)
+  #   and any cardboard/equipment held up in the trailer.  Previous 1.30 m only
+  #   covered the trailer structure and left the operator's upper body visible to
+  #   the LiDAR, causing ICP to lock onto a stationary human as a "static feature".
+  # yMin/yMax ±1.10: covers arms and extended cardboard beyond trailer half-width.
   - BoundingBoxDataPointsFilter:
       xMin: -3.60
       xMax: -0.88
-      yMin: -0.85
-      yMax:  0.85
+      yMin: -1.10
+      yMax:  1.10
       zMin: -0.20
-      zMax:  1.30
+      zMax:  2.20
       removeInside: 1
 
   # High-quality sampling: keep 90% of the Hesai scan.

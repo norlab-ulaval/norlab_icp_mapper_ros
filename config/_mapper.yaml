@@ -133,10 +133,13 @@ icp:
         smoothLength: 4
     - CounterTransformationChecker:
         maxIterationCount: 50
-    # Safety net: abort runaway ICP registrations immediately.
+    # Safety net: abort truly runaway ICP registrations.
+    # Set wider than the quality gate (35 deg / 2.5 m) so this is a last resort,
+    # not the primary rejection mechanism. During fast turns the initial alignment
+    # can legitimately start 30-40 deg off before ICP converges.
     - BoundTransformationChecker:
-        maxRotationNorm: 0.5    # 28° per step hard cap
-        maxTranslationNorm: 2.0
+        maxRotationNorm: 0.8    # 46° per step hard cap (was 28°)
+        maxTranslationNorm: 3.0  # 3 m (was 2 m)
 
   inspector: NullInspector
 

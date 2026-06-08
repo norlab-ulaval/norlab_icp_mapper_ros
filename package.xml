@@ -2,29 +2,42 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>norlab_icp_mapper_ros</name>
-  <version>2.1.1</version>
-  <description>A bridge between norlab_icp_mapper and ROS.</description>
+  <version>2.2.0</version>
+  <description>
+    A robust ROS 2 Jazzy wrapper around norlab_icp_mapper and libpointmatcher for
+    LiDAR odometry and mapping. Adds safe threading, configurable QoS, proper TF
+    handling, motion deskewing, ICP failure recovery, and registration quality gating.
+  </description>
   <maintainer email="simon-pierre.deschenes.1@ulaval.ca">Simon-Pierre Deschenes</maintainer>
   <maintainer email="matej.boxan@gmail.com">Matej Boxan</maintainer>
-  <license>new BSD</license>
+  <license>BSD-3-Clause</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- Runtime + build dependencies -->
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>diagnostic_msgs</depend>
   <depend>std_srvs</depend>
   <depend>tf2_ros</depend>
   <depend>tf2</depend>
   <depend>tf2_geometry_msgs</depend>
   <depend>libpointmatcher_ros</depend>
+  <depend>rosbag2_cpp</depend>
+  <depend>rosbag2_storage</depend>
 
+  <!-- Service interface generation -->
   <build_depend>rosidl_default_generators</build_depend>
-
   <exec_depend>rosidl_default_runtime</exec_depend>
-
   <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <!-- Test dependencies -->
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_cmake_copyright</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

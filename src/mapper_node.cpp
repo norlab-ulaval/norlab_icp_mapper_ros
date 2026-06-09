@@ -857,7 +857,7 @@ private:
         PM::DataPoints updatedMap = creatingMap ? inputInMapFrame : currentMap;
         if (!creatingMap) {
             deterministicMapperModule_->inPlaceUpdateMap(
-                inputInMapFrame, updatedMap, acceptedSensorToMap);
+                inputInSensorFrame, updatedMap, acceptedSensorToMap);
         }
         normalizeMapNormals(updatedMap);
         mapper->setMap(updatedMap);
@@ -873,7 +873,7 @@ private:
             else
             {
                 globalOutputMapperModule_->inPlaceUpdateMap(
-                    inputInMapFrame, globalOutputMap_, acceptedSensorToMap);
+                    inputInSensorFrame, globalOutputMap_, acceptedSensorToMap);
             }
             ++globalOutputMapUpdates_;
         }

@@ -6,9 +6,11 @@
 #include <string>
 #include <unordered_map>
 #include <memory>
+#include <vector>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <Eigen/Dense>
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Deskewer — motion compensation for spinning LiDAR scanners.
@@ -64,11 +66,34 @@ public:
         uint32_t round_to_ns,
         uint32_t timeout_ms);
 
+    // ── ImuSample ─────────────────────────────────────────────────────────────
+    // (absolute_ns, angular_velocity in IMU frame).  Feed a time-ordered
+    // snapshot to deskewCloudImu() — the Deskewer does not own the buffer.
+    using ImuSample = std::pair<int64_t, Eigen::Vector3d>;
+
     // ── deskewCloud ───────────────────────────────────────────────────────────
     // Modifies cloud in-place. Returns true on success, false if deskew was
     // skipped (missing time field, TF failure, etc.).
     // On failure the cloud is left unmodified.
     bool deskewCloud(DP& cloud, const std::string& sensor_frame);
+
+    // ── deskewCloudImu ────────────────────────────────────────────────────────
+    // Rotation-only deskew driven by IMU gyro, not TF odom.
+    // This avoids the odom-error→swirl coupling: odom angular rate errors are
+    // baked into every inserted scan when using TF deskew, producing the classic
+    // "swirl" / "double-tree" map artefact even when the whole-scan ICP pose is
+    // correct.  IMU gyro (MTi-100) is immune to track slip and heading drift.
+    //
+    // imu_buf   : time-ordered IMU samples covering the scan time range.
+    // R_sensor_imu : rotation from IMU frame to sensor/LiDAR frame
+    //                (lookupTransform(sensor, imu_link, t=0).rotation).
+    //
+    // Returns true on success, false if skipped (empty buffer, missing time
+    // field, coverage gap).  On false the cloud is left unmodified.
+    bool deskewCloudImu(
+        DP& cloud,
+        const std::vector<ImuSample>& imu_buf,
+        const Eigen::Matrix3d& R_sensor_imu);
 
 private:
     std::shared_ptr<tf2_ros::Buffer> tfBuffer_;

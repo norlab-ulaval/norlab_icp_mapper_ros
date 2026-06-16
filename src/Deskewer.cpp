@@ -4,6 +4,7 @@
 #include <tf2/utils.h>
 #include <omp.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cmath>
@@ -274,6 +275,142 @@ bool Deskewer::deskewCloud(DP& cloud, const std::string& sensor_frame)
     RCLCPP_DEBUG(logger_,
         "[Deskewer] Deskewed %d points in %ld ms (%zu unique TF slots).",
         n_pts, elapsed_ms, tfsCache_.size());
+
+    return true;
+}
+
+// ── deskewCloudImu ────────────────────────────────────────────────────────────
+
+bool Deskewer::deskewCloudImu(
+    DP& cloud,
+    const std::vector<ImuSample>& imu_buf,
+    const Eigen::Matrix3d& R_sensor_imu)
+{
+    const auto begin_wall = std::chrono::steady_clock::now();
+
+    // ── Preconditions ─────────────────────────────────────────────────────────
+    if (!cloud.timeExists(timeFieldName_))
+    {
+        RCLCPP_WARN(logger_,
+            "[Deskewer/IMU] Cloud has no time field '%s'. Deskewing skipped.",
+            timeFieldName_.c_str());
+        return false;
+    }
+    if (imu_buf.empty())
+    {
+        static rclcpp::Clock warn_clock(RCL_STEADY_TIME);
+        RCLCPP_WARN_THROTTLE(logger_, warn_clock, 5000,
+            "[Deskewer/IMU] IMU buffer is empty — no deskewing.");
+        return false;
+    }
+
+    const int n_pts = static_cast<int>(cloud.getNbPoints());
+    if (n_pts == 0) return false;
+
+    // ── Find scan time bounds (absolute nanoseconds) ──────────────────────────
+    // Some LiDAR drivers emit padding/header points with garbage timestamps.
+    // A full Hesai XT-32 scan spans < 150 ms. We find the true scan end as the
+    // max timestamp, then compute scan start as the minimum among timestamps that
+    // fall within MAX_SCAN_SPAN_NS of the end. Outlier timestamps are skipped in
+    // both the cache-build and apply loops below.
+    static constexpr int64_t MAX_SCAN_SPAN_NS = 200'000'000LL;  // 200 ms
+
+    int64_t scan_end_ns = cloud.times(0);
+    for (int i = 1; i < n_pts; ++i)
+        scan_end_ns = std::max(scan_end_ns, cloud.times(i));
+
+    int64_t scan_start_ns = scan_end_ns;
+    for (int i = 0; i < n_pts; ++i)
+    {
+        const int64_t t = cloud.times(i);
+        if (t >= scan_end_ns - MAX_SCAN_SPAN_NS)
+            scan_start_ns = std::min(scan_start_ns, t);
+    }
+    const double scan_span_ms = (scan_end_ns - scan_start_ns) * 1e-6;
+
+    RCLCPP_INFO_ONCE(logger_,
+        "[Deskewer/IMU] First scan: start=%.6f s  end=%.6f s  span=%.1f ms  pts=%d",
+        scan_start_ns * 1e-9, scan_end_ns * 1e-9, scan_span_ms, n_pts);
+
+    // ── Warn if IMU buffer doesn't cover the scan ─────────────────────────────
+    if (imu_buf.front().first > scan_start_ns ||
+        imu_buf.back().first  < scan_end_ns - 50'000'000LL)  // allow 50 ms slack at end
+    {
+        static rclcpp::Clock cov_warn_clock(RCL_STEADY_TIME);
+        RCLCPP_WARN_THROTTLE(logger_, cov_warn_clock, 5000,
+            "[Deskewer/IMU] IMU buffer coverage [%.3f, %.3f] doesn't fully cover "
+            "scan [%.3f, %.3f] — deskew may be imprecise at edges.",
+            imu_buf.front().first * 1e-9, imu_buf.back().first * 1e-9,
+            scan_start_ns * 1e-9, scan_end_ns * 1e-9);
+    }
+
+    // ── Build rotation cache: (binned t_point) → 4×4 correction matrix ───────
+    // We correct each point to the scan-end frame.
+    // Physics: robot rotated by ω*Δt between t_point and scan_end.
+    //   T_sensor@end_sensor@point = R(-ω_sensor, Δt)   [Δt = scan_end - t_point > 0]
+    // i.e. AngleAxis(-angle, ω_hat) with angle = ‖ω_sensor‖ * Δt.
+    //
+    // We use the same binned-cache pattern as deskewCloud() to avoid redundant
+    // Eigen operations for the thousands of points sharing the same time slot.
+
+    const int64_t round_to = static_cast<int64_t>(roundToNs_);
+    std::unordered_map<int64_t, Eigen::Matrix4f> rotCache;
+    rotCache.reserve(static_cast<size_t>(scan_span_ms / (round_to * 1e-6) + 64));
+
+    for (int i = 0; i < n_pts; ++i)
+    {
+        const int64_t t_point = cloud.times(i);
+        // Skip outlier timestamps — they would apply multi-second rotations.
+        if (t_point < scan_end_ns - MAX_SCAN_SPAN_NS) continue;
+        const int64_t binned = t_point / round_to;
+        auto [it_cache, inserted] = rotCache.try_emplace(binned, Eigen::Matrix4f::Identity());
+        if (!inserted) continue;
+
+        // Duration from this point to scan end (positive: point is older).
+        const double dt_s = (scan_end_ns - t_point) * 1e-9;
+
+        // Find the closest IMU sample by binary search on the sorted buffer.
+        // imu_buf is sorted ascending by .first (timestamp_ns).
+        const auto cmp = [](const ImuSample& s, int64_t t){ return s.first < t; };
+        auto it = std::lower_bound(imu_buf.begin(), imu_buf.end(), t_point, cmp);
+        if (it == imu_buf.end())          { --it; }   // past-the-end → use last
+        else if (it != imu_buf.begin())
+        {
+            auto prev = std::prev(it);
+            if (std::abs(prev->first - t_point) <= std::abs(it->first - t_point))
+                it = prev;
+        }
+        const Eigen::Vector3d omega_imu    = it->second;
+        const Eigen::Vector3d omega_sensor = R_sensor_imu * omega_imu;
+        const double omega_norm            = omega_sensor.norm();
+
+        if (omega_norm > 1e-8 && dt_s > 1e-9)
+        {
+            const double angle = omega_norm * dt_s;  // > 0
+            // Un-rotate the point backward by the angular motion between t_point
+            // and scan_end, expressing it in sensor@scan_end.
+            const Eigen::AngleAxisd aa(-angle, omega_sensor / omega_norm);
+            it_cache->second.block<3, 3>(0, 0) = aa.toRotationMatrix().cast<float>();
+        }
+    }
+
+    // ── Apply correction in parallel ──────────────────────────────────────────
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n_pts; ++i)
+    {
+        const int64_t t_point = cloud.times(i);
+        if (t_point < scan_end_ns - MAX_SCAN_SPAN_NS) continue;  // outlier: no correction
+        const int64_t binned = t_point / round_to;
+        cloud.features.col(i) = rotCache.at(binned) * cloud.features.col(i);
+    }
+
+    const auto end_wall = std::chrono::steady_clock::now();
+    const auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end_wall - begin_wall).count();
+
+    RCLCPP_DEBUG(logger_,
+        "[Deskewer/IMU] Deskewed %d pts in %ld ms (%zu unique bins).",
+        n_pts, elapsed_ms, rotCache.size());
 
     return true;
 }

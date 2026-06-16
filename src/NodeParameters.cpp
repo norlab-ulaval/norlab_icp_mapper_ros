@@ -17,27 +17,27 @@ NodeParameters::NodeParameters(rclcpp::Node& node)
 
 void NodeParameters::declareParameters(rclcpp::Node& node)
 {
-    // ── Frame names ───────────────────────────────────────────────────────────
+    // ── Frame names ──
     node.declare_parameter<std::string>("map_frame", "map");
     node.declare_parameter<std::string>("odom_frame", "odom");
     node.declare_parameter<std::string>("robot_frame", "base_link");
     node.declare_parameter<std::string>("filtering_frame", "base_link");
 
-    // ── Map / file I/O ────────────────────────────────────────────────────────
+    // ── Map / file I/O ──
     node.declare_parameter<std::string>("mapping_config", "");
     node.declare_parameter<std::string>("initial_map_file_name", "");
     node.declare_parameter<std::string>("initial_robot_pose", "");
     node.declare_parameter<std::string>("final_map_file_name", "map.vtk");
     node.declare_parameter<std::string>("final_trajectory_file_name", "trajectory.vtk");
 
-    // ── Publish rates ─────────────────────────────────────────────────────────
+    // ── Publish rates ──
     node.declare_parameter<float>("map_publish_rate", 0.05f);
     node.declare_parameter<float>("map_tf_publish_rate", 50.0f);
 
-    // ── Offline shutdown ──────────────────────────────────────────────────────
+    // ── Offline shutdown ──
     node.declare_parameter<float>("max_idle_time", 10.0f);
 
-    // ── Mode flags ────────────────────────────────────────────────────────────
+    // ── Mode flags ──
     node.declare_parameter<bool>("is_3D", true);
     node.declare_parameter<bool>("is_mapping", true);
     node.declare_parameter<bool>("is_online", true);
@@ -46,7 +46,7 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<bool>("localizing", true);
     node.declare_parameter<bool>("input_qos_reliable", false);
 
-    // ── Deskew ────────────────────────────────────────────────────────────────
+    // ── Deskew ──
     node.declare_parameter<bool>("deskew", false);
     node.declare_parameter<int>("expected_unique_deskewing_TF_number", 4000);
     node.declare_parameter<int>("deskewing_round_to_nanosecs", 50000);
@@ -59,18 +59,18 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<std::string>("deskew_imu_topic", "/mti100/data");
     node.declare_parameter<std::string>("deskew_imu_frame", "imu_link");
 
-    // ── TF ────────────────────────────────────────────────────────────────────
+    // ── TF ──
     node.declare_parameter<int>("tf_lookup_timeout_ms", 200);
 
-    // ── Map output compression ────────────────────────────────────────────────
+    // ── Map output compression ──
     node.declare_parameter<double>("compression_voxel_size", 0.5);
 
-    // ── Map publication crop ──────────────────────────────────────────────────
+    // ── Map publication crop ──
     // 0.0 = publish full map. Set to e.g. 40.0 to crop to a 40m bubble around
     // the robot — reduces Foxglove WebSocket bandwidth by ~80-90% on large maps.
     node.declare_parameter<double>("map_publish_radius_m", 0.0);
 
-    // ── Quality gate ──────────────────────────────────────────────────────────
+    // ── Quality gate ──
     node.declare_parameter<int>("min_input_points", 100);
     node.declare_parameter<double>("max_translation_correction", 2.0);
     node.declare_parameter<double>("max_rotation_correction_deg", 30.0);
@@ -101,27 +101,27 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
 
 void NodeParameters::retrieveParameters(rclcpp::Node& node)
 {
-    // ── Frame names ───────────────────────────────────────────────────────────
+    // ── Frame names ──
     node.get_parameter("map_frame", mapFrame);
     node.get_parameter("odom_frame", odomFrame);
     node.get_parameter("robot_frame", robotFrame);
     node.get_parameter("filtering_frame", filteringFrame);
 
-    // ── Map / file I/O ────────────────────────────────────────────────────────
+    // ── Map / file I/O ──
     node.get_parameter("mapping_config", mappingConfig);
     node.get_parameter("initial_map_file_name", initialMapFileName);
     node.get_parameter("initial_robot_pose", initialRobotPoseString);
     node.get_parameter("final_map_file_name", finalMapFileName);
     node.get_parameter("final_trajectory_file_name", finalTrajectoryFileName);
 
-    // ── Publish rates ─────────────────────────────────────────────────────────
+    // ── Publish rates ──
     node.get_parameter("map_publish_rate", mapPublishRate);
     node.get_parameter("map_tf_publish_rate", mapTfPublishRate);
 
-    // ── Offline shutdown ──────────────────────────────────────────────────────
+    // ── Offline shutdown ──
     node.get_parameter("max_idle_time", maxIdleTime);
 
-    // ── Mode flags ────────────────────────────────────────────────────────────
+    // ── Mode flags ──
     node.get_parameter("is_3D", is3D);
     node.get_parameter("is_mapping", isMapping);
     node.get_parameter("is_online", isOnline);
@@ -130,7 +130,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     node.get_parameter("localizing", localizing);
     node.get_parameter("input_qos_reliable", inputQosReliable);
 
-    // ── Deskew ────────────────────────────────────────────────────────────────
+    // ── Deskew ──
     node.get_parameter("deskew", deskew);
     node.get_parameter("expected_unique_deskewing_TF_number", expectedUniqueDeskewingTFNumber);
     node.get_parameter("deskewing_round_to_nanosecs", deskewingRoundToNanoSecs);
@@ -141,16 +141,16 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     node.get_parameter("deskew_imu_topic", deskewImuTopic);
     node.get_parameter("deskew_imu_frame", deskewImuFrame);
 
-    // ── TF ────────────────────────────────────────────────────────────────────
+    // ── TF ──
     node.get_parameter("tf_lookup_timeout_ms", tfLookupTimeoutMs);
 
-    // ── Map output compression ────────────────────────────────────────────────
+    // ── Map output compression ──
     node.get_parameter("compression_voxel_size", compressionVoxelSize);
 
-    // ── Map publication crop ──────────────────────────────────────────────────
+    // ── Map publication crop ──
     node.get_parameter("map_publish_radius_m", mapPublishRadiusM);
 
-    // ── Quality gate ──────────────────────────────────────────────────────────
+    // ── Quality gate ──
     node.get_parameter("min_input_points", minInputPoints);
     node.get_parameter("max_translation_correction", maxTranslationCorrection);
     node.get_parameter("max_rotation_correction_deg", maxRotationCorrectionDeg);
@@ -181,7 +181,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
 
 void NodeParameters::validateParameters() const
 {
-    // ── File existence checks ─────────────────────────────────────────────────
+    // ── File existence checks ──
     if (!initialMapFileName.empty())
     {
         std::ifstream ifs(initialMapFileName.c_str());
@@ -200,7 +200,7 @@ void NodeParameters::validateParameters() const
         }
     }
 
-    // ── Offline-mode output file checks ───────────────────────────────────────
+    // ── Offline-mode output file checks ──
     if (!isOnline)
     {
         std::ofstream mapOfs(finalMapFileName.c_str(), std::ios_base::app);
@@ -221,7 +221,7 @@ void NodeParameters::validateParameters() const
         }
     }
 
-    // ── Rate checks ───────────────────────────────────────────────────────────
+    // ── Rate checks ──
     if (mapPublishRate < 0.0f)
     {
         throw std::runtime_error("map_publish_rate must be non-negative: " + std::to_string(mapPublishRate));
@@ -231,14 +231,14 @@ void NodeParameters::validateParameters() const
         throw std::runtime_error("map_tf_publish_rate must be positive: " + std::to_string(mapTfPublishRate));
     }
 
-    // ── Logic consistency ─────────────────────────────────────────────────────
+    // ── Logic consistency ──
     if (!isMapping && initialMapFileName.empty())
     {
         throw std::runtime_error(
             "is_mapping=false requires initial_map_file_name to be set.");
     }
 
-    // ── Deskew ────────────────────────────────────────────────────────────────
+    // ── Deskew ──
     if (deskew)
     {
         if (expectedUniqueDeskewingTFNumber <= 0)
@@ -273,21 +273,21 @@ void NodeParameters::validateParameters() const
         }
     }
 
-    // ── TF ────────────────────────────────────────────────────────────────────
+    // ── TF ──
     if (tfLookupTimeoutMs <= 0)
     {
         throw std::runtime_error(
             "tf_lookup_timeout_ms must be positive: " + std::to_string(tfLookupTimeoutMs));
     }
 
-    // ── Compression ───────────────────────────────────────────────────────────
+    // ── Compression ──
     if (compressionVoxelSize < 0.0)
     {
         throw std::runtime_error(
             "compression_voxel_size must be non-negative: " + std::to_string(compressionVoxelSize));
     }
 
-    // ── Quality gate ──────────────────────────────────────────────────────────
+    // ── Quality gate ──
     if (minInputPoints < 0)
     {
         throw std::runtime_error(

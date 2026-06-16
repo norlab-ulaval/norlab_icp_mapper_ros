@@ -29,7 +29,7 @@ def generate_launch_description():
                 "compression_voxel_size", default_value="0.10",
                 description="Map voxel compression (m). 0.10=high quality, 0.20=faster.",
             ),
-            # ── IMU odometry (optional, mirrors mtt branch behaviour) ─────────
+            # ── IMU odometry (optional, mirrors mtt branch behaviour) ──
             # Set enable_imu_odom:=true when no wheel odom is available (e.g. bag
             # replay without the driver running). Requires the imu_odom package.
             # deskew is automatically enabled when imu_odom is active.

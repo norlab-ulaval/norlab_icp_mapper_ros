@@ -312,8 +312,11 @@ int main(int argc, char** argv)
     std::vector<PoseRow> poses;
     Stats stats;
 
-    const TP sensor_to_filtering = baseLinkToHesai().inverse();
-    const TP filtering_to_sensor = baseLinkToHesai();
+    // baseLinkToHesai() = T_base_link_hesai (maps hesai points INTO base_link frame).
+    // sensor_to_filtering = T_filteringFrame_sensor = T_base_link_hesai.
+    // filtering_to_sensor = T_sensor_filteringFrame = T_hesai_base_link = inverse.
+    const TP sensor_to_filtering = baseLinkToHesai();
+    const TP filtering_to_sensor = baseLinkToHesai().inverse();
 
     rosbag2_cpp::Reader reader;
     rosbag2_storage::StorageOptions storage_options;
@@ -388,9 +391,10 @@ int main(int argc, char** argv)
         if (stats.accepted == 0 ||
             update_dist >= args.min_translation_update_m ||
             update_yaw >= args.min_yaw_update_deg) {
+          DP scan_in_map = transformation->compute(input, sensor_to_map);
           DP local_map = mapper.getMap();
-          global_mapper_module->inPlaceUpdateMap(input, global_map, sensor_to_map);
-          local_mapper_module->inPlaceUpdateMap(input, local_map, sensor_to_map);
+          global_mapper_module->inPlaceUpdateMap(scan_in_map, global_map, sensor_to_map);
+          local_mapper_module->inPlaceUpdateMap(scan_in_map, local_map, sensor_to_map);
           const Eigen::Vector2f center(sensor_to_map(0, 3), sensor_to_map(1, 3));
           local_map = cropRadius(local_map, center, args.local_map_radius_m);
           ensureNormals(local_map, normal_filter);

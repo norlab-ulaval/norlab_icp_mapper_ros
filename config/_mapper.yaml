@@ -1,20 +1,4 @@
-# ════════════════════════════════════════════════════════════════════════════════
-# _mapper.yaml — norlab_icp_mapper_ros / branch: mohamed
-#
-# Standalone ICP mapping config for MTT-154 with single Hesai XT-32.
-# When running WITH cloud_merger (dual LiDAR), use:
-#   norlab_robot/config/mapping/_config.yaml          (live)
-#   norlab_robot/config/mapping/_config_replay_dense.yaml  (replay)
-#   norlab_robot/config/mapping/_config_replay_max_quality.yaml  (post-processing)
-#
-# Key differences from upstream mtt branch _mapper.yaml:
-#   - Dynamic object tracking enabled (operator removal)
-#   - Sampling ratio 0.9 instead of 0.3 (keep more detail)
-#   - BoundTransformationChecker (safety net against runaway registrations)
-#   - minDistNewPoint 0.05 m (5 cm map resolution vs 10 cm)
-#   - knn 7 (more robust correspondence in outdoor structure)
-# ════════════════════════════════════════════════════════════════════════════════
-
+# ── _mapper.yaml — norlab_icp_mapper_ros / branch: mohamed Standalone ICP mapping config for MTT-154 with single Hesai XT-32. When running WITH cloud_merger (dual LiDAR), use: norlab_robot/config/mapping/_config.yaml          (live) norlab_robot/config/mapping/_config_replay_dense.yaml  (replay) norlab_robot/config/mapping/_config_replay_max_quality.yaml  (post-processing) Key differences from upstream mtt branch _mapper.yaml: - Dynamic object tracking enabled (operator removal) - Sampling ratio 0.9 instead of 0.3 (keep more detail) - BoundTransformationChecker (safety net against runaway registrations) - minDistNewPoint 0.05 m (5 cm map resolution vs 10 cm) - knn 7 (more robust correspondence in outdoor structure) ──
 mapper:
   updateCondition:
     type:  distance
@@ -23,7 +7,7 @@ mapper:
   sensorMaxRange: 60.0   # Hesai XT-32 reliable outdoor range
 
   mapperModule:
-    # ── Dynamic object removal ────────────────────────────────────────────────
+    # ── Dynamic object removal ──
     # Tracks per-point dynamic probability across map updates using ray-casting.
     # Static structure converges toward p≈0 (never removed).
     # Moving objects (operator, vehicles) converge toward p≈1 (removed by post filter).
@@ -42,7 +26,7 @@ mapper:
         minDistNewPoint: 0.05
 
 input:
-  # ── Self-filter: tractor chassis (base_link frame) ─────────────────────────
+  # ── Self-filter: tractor chassis (base_link frame) ──
   # Removes Hesai returns from the tractor body and tracks.
   # base_link is 10 cm above base_footprint: z=-0.10 = ground level.
   # Verified against mtt_description URDF and cloud_merger bounding boxes.
@@ -55,7 +39,7 @@ input:
       zMax:  0.80
       removeInside: 1
 
-  # ── Self-filter: Hesai XT-32 cage (sensor pod, y≈-0.05 in base_link) ──────────
+  # ── Self-filter: Hesai XT-32 cage (sensor pod, y≈-0.05 in base_link) ──
   - BoundingBoxDataPointsFilter:
       xMin: -0.25
       xMax:  0.15
@@ -65,7 +49,7 @@ input:
       zMax:  1.10
       removeInside: 1
 
-  # ── Self-filter: RS-Airy mount (calibrated 2026-04-21) ───────────────────────
+  # ── Self-filter: RS-Airy mount (calibrated 2026-04-21) ──
   # rsairy in base_link: x≈-0.04  y≈+0.80  z≈+0.86 (GICP calib, RMSE 3 cm).
   # Without this the Hesai sees the RS-Airy housing at ~0.85 m and injects
   # a ghost blob at every robot position into the map.
@@ -78,7 +62,7 @@ input:
       zMax:  1.05
       removeInside: 1
 
-  # ── Self-filter: trailer body + seated operator (when trailer is attached) ───
+  # ── Self-filter: trailer body + seated operator (when trailer is attached) ──
   # Hitch at x=-1.45. Rear at x≈-3.35, half-width 0.40 m, +0.25 m margin.
   # xMax=-0.88: closes the 5 cm gap with chassis xMin=-0.90.
   # zMax=2.20: covers a tall seated operator (~2.0 m above ground incl. seat height)

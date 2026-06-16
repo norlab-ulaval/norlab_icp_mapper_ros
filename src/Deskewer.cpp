@@ -10,10 +10,7 @@
 #include <cmath>
 #include <stdexcept>
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Deskewer implementation
-// ──────────────────────────────────────────────────────────────────────────────
-
+// ── Deskewer implementation ──
 Deskewer::TimeMode Deskewer::parseTimeMode(const std::string& mode_str)
 {
     if (mode_str == "absolute_ns") { return TimeMode::ABSOLUTE_NS; }
@@ -53,7 +50,7 @@ Deskewer::Deskewer(
     }
 }
 
-// ── toAbsoluteNs ─────────────────────────────────────────────────────────────
+// ── toAbsoluteNs ──
 
 int64_t Deskewer::toAbsoluteNs(
     int64_t raw_time,
@@ -97,7 +94,7 @@ int64_t Deskewer::toAbsoluteNs(
     }
 }
 
-// ── detectTimeMode ────────────────────────────────────────────────────────────
+// ── detectTimeMode ──
 
 Deskewer::TimeMode Deskewer::detectTimeMode(int64_t sample_raw, int64_t header_stamp_ns) const
 {
@@ -115,13 +112,13 @@ Deskewer::TimeMode Deskewer::detectTimeMode(int64_t sample_raw, int64_t header_s
     return TimeMode::RELATIVE_NS;
 }
 
-// ── deskewCloud ───────────────────────────────────────────────────────────────
+// ── deskewCloud ──
 
 bool Deskewer::deskewCloud(DP& cloud, const std::string& sensor_frame)
 {
     const auto begin_wall = std::chrono::steady_clock::now();
 
-    // ── Check time field exists ───────────────────────────────────────────────
+    // ── Check time field exists ──
     if (!cloud.timeExists(timeFieldName_))
     {
         RCLCPP_WARN(logger_,
@@ -137,7 +134,7 @@ bool Deskewer::deskewCloud(DP& cloud, const std::string& sensor_frame)
         return false;
     }
 
-    // ── Find min / max raw point time ─────────────────────────────────────────
+    // ── Find min / max raw point time ──
     int64_t min_raw = cloud.times(0);
     int64_t max_raw = cloud.times(0);
     for (int i = 1; i < n_pts; ++i)
@@ -152,7 +149,7 @@ bool Deskewer::deskewCloud(DP& cloud, const std::string& sensor_frame)
         min_raw, max_raw, max_raw - min_raw, n_pts,
         min_raw * 1e-9, max_raw * 1e-9);
 
-    // ── Determine effective time mode ─────────────────────────────────────────
+    // ── Determine effective time mode ──
     TimeMode effective_mode = timeMode_;
     if (timeMode_ == TimeMode::AUTO)
     {
@@ -163,7 +160,7 @@ bool Deskewer::deskewCloud(DP& cloud, const std::string& sensor_frame)
             (effective_mode == TimeMode::ABSOLUTE_NS) ? "absolute_ns" : "relative_ns");
     }
 
-    // ── Convert raw times to absolute nanoseconds for TF lookup ──────────────
+    // ── Convert raw times to absolute nanoseconds for TF lookup ──
     // latest_abs_ns is the reference time (end-of-scan) for all corrections.
     int64_t latest_abs_ns;
     // A lambda to convert any raw point time to absolute ns.
@@ -209,7 +206,7 @@ bool Deskewer::deskewCloud(DP& cloud, const std::string& sensor_frame)
 
     const rclcpp::Time latest_time_ros(latest_abs_ns);
 
-    // ── Build TF cache: lookup each unique binned timestamp ───────────────────
+    // ── Build TF cache: lookup each unique binned timestamp ──
     tfsCache_.clear();
     const int64_t round_to = static_cast<int64_t>(roundToNs_);
     const auto tf_timeout = rclcpp::Duration(0, static_cast<uint32_t>(timeoutMs_ * 1'000'000u));
@@ -253,7 +250,7 @@ bool Deskewer::deskewCloud(DP& cloud, const std::string& sensor_frame)
         "[Deskewer] Populated TF cache with %zu unique time slots. TF failures: %d",
         tfsCache_.size(), tf_failures);
 
-    // ── Apply transforms in parallel ──────────────────────────────────────────
+    // ── Apply transforms in parallel ──
     // At this point tfsCache_ is fully populated (no more writes).
     // Reading with .at() is safe for concurrent readers.
     #pragma omp parallel for schedule(static)
@@ -279,7 +276,7 @@ bool Deskewer::deskewCloud(DP& cloud, const std::string& sensor_frame)
     return true;
 }
 
-// ── deskewCloudImu ────────────────────────────────────────────────────────────
+// ── deskewCloudImu ──
 
 bool Deskewer::deskewCloudImu(
     DP& cloud,
@@ -288,7 +285,7 @@ bool Deskewer::deskewCloudImu(
 {
     const auto begin_wall = std::chrono::steady_clock::now();
 
-    // ── Preconditions ─────────────────────────────────────────────────────────
+    // ── Preconditions ──
     if (!cloud.timeExists(timeFieldName_))
     {
         RCLCPP_WARN(logger_,
@@ -307,7 +304,7 @@ bool Deskewer::deskewCloudImu(
     const int n_pts = static_cast<int>(cloud.getNbPoints());
     if (n_pts == 0) return false;
 
-    // ── Find scan time bounds (absolute nanoseconds) ──────────────────────────
+    // ── Find scan time bounds (absolute nanoseconds) ──
     // Some LiDAR drivers emit padding/header points with garbage timestamps.
     // A full Hesai XT-32 scan spans < 150 ms. We find the true scan end as the
     // max timestamp, then compute scan start as the minimum among timestamps that
@@ -332,7 +329,7 @@ bool Deskewer::deskewCloudImu(
         "[Deskewer/IMU] First scan: start=%.6f s  end=%.6f s  span=%.1f ms  pts=%d",
         scan_start_ns * 1e-9, scan_end_ns * 1e-9, scan_span_ms, n_pts);
 
-    // ── Warn if IMU buffer doesn't cover the scan ─────────────────────────────
+    // ── Warn if IMU buffer doesn't cover the scan ──
     if (imu_buf.front().first > scan_start_ns ||
         imu_buf.back().first  < scan_end_ns - 50'000'000LL)  // allow 50 ms slack at end
     {
@@ -344,7 +341,7 @@ bool Deskewer::deskewCloudImu(
             scan_start_ns * 1e-9, scan_end_ns * 1e-9);
     }
 
-    // ── Build rotation cache: (binned t_point) → 4×4 correction matrix ───────
+    // ── Build rotation cache: (binned t_point) → 4×4 correction matrix ──
     // We correct each point to the scan-end frame.
     // Physics: robot rotated by ω*Δt between t_point and scan_end.
     //   T_sensor@end_sensor@point = R(-ω_sensor, Δt)   [Δt = scan_end - t_point > 0]
@@ -394,7 +391,7 @@ bool Deskewer::deskewCloudImu(
         }
     }
 
-    // ── Apply correction in parallel ──────────────────────────────────────────
+    // ── Apply correction in parallel ──
     #pragma omp parallel for schedule(static)
     for (int i = 0; i < n_pts; ++i)
     {

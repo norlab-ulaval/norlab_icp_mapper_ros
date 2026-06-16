@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -13,6 +14,7 @@
 #include <thread>
 #include <sstream>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/imu.hpp>
 #include <pointmatcher/PointMatcher.h>
 #include <pointmatcher_ros/PointMatcher_ROS.h>
 #include <norlab_icp_mapper/Trajectory.h>
@@ -29,24 +31,9 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <std_srvs/srv/empty.hpp>
 
-// ══════════════════════════════════════════════════════════════════════════════
-// FRAME CONVENTION
-//
-// Variable naming: aToB = T_B_A  (maps points FROM frame A INTO frame B).
-//
-//   sensorToOdom            = T_odom_sensor   ← tf2 lookupTransform(odom, sensor)
-//   odomToMap               = T_map_odom      ← ICP correction (frozen between accepted scans)
-//   sensorToMapBeforeUpdate = T_map_sensor    = T_map_odom * T_odom_sensor
-//   sensorToMapAfterUpdate  = T_map_sensor'   (result of ICP optimisation)
-//   robotToMap              = T_map_robot      = sensorToMapAfterUpdate * robotToSensor
-//   robotToSensor           = T_sensor_robot   (static TF from URDF)
-//
-// ICP prior:  sensorToMapBeforeUpdate = odomToMap(t_last_accepted) * sensorToOdom(t_now)
-// After ICP:  odomToMap_new = sensorToMapAfterUpdate * sensorToOdom^{-1}
-//             (= T_map_sensor' * T_sensor_odom = T_map_odom_new)
-//
+// ── Frame convention ──
+// aToB = T_B_A  (maps points FROM frame A INTO frame B)
 // T notation is column-major: T_B_A * p_A = p_B
-// ══════════════════════════════════════════════════════════════════════════════
 
 class MapperNode : public rclcpp::Node
 {
@@ -60,6 +47,16 @@ public:
 
         mapper = std::make_unique<norlab_icp_mapper::Mapper>(params->mappingConfig, params->is3D, params->isOnline,
                                                params->isMapping, params->saveMapCellsOnHardDrive);
+
+        RCLCPP_INFO(this->get_logger(),
+            "Map management: cell_storage=%s trimming=%s — %s",
+            params->saveMapCellsOnHardDrive ? "disk(/tmp/*.vtk)" : "RAM",
+            params->enableMapTrimming ? "ON" : "OFF",
+            params->saveMapCellsOnHardDrive && !params->enableMapTrimming
+                ? "large-area mode (bounded local ICP map, global history preserved)"
+                : params->enableMapTrimming
+                    ? "short-range mode (map capped at trim radius, global history LOST)"
+                    : "RAM mode (full map in RAM, grows with total area)");
 
         if(!params->initialMapFileName.empty())
         {
@@ -101,7 +98,37 @@ public:
             static_cast<uint32_t>(params->deskewingRoundToNanoSecs),
             static_cast<uint32_t>(params->tfLookupTimeoutMs));
 
-        mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("map", rclcpp::QoS(1).reliable());
+        // IMU subscription for gyro-based rotation-only deskew.
+        // This path replaces TF-odom deskew in replay to avoid the coupling:
+        //   bad odom angular rate → per-point twist → swirl/double-tree in map.
+        if (params->deskew && params->deskewSource == "imu")
+        {
+            auto imu_qos = rclcpp::SensorDataQoS().best_effort();
+            if (!params->isOnline) { imu_qos.keep_all(); }
+            imuDeskewSubscription_ = this->create_subscription<sensor_msgs::msg::Imu>(
+                params->deskewImuTopic, imu_qos,
+                [this](const sensor_msgs::msg::Imu::SharedPtr msg)
+                {
+                    const int64_t stamp_ns = rclcpp::Time(msg->header.stamp).nanoseconds();
+                    const Eigen::Vector3d omega(
+                        msg->angular_velocity.x,
+                        msg->angular_velocity.y,
+                        msg->angular_velocity.z);
+                    std::lock_guard<std::mutex> lk(imuDeskewBufMutex_);
+                    imuDeskewBuf_.emplace_back(stamp_ns, omega);
+                    // Retain up to 5 s of gyro history — covers any scan gap during replay.
+                    while (imuDeskewBuf_.size() > 1 &&
+                           stamp_ns - imuDeskewBuf_.front().first > 5'000'000'000LL)
+                        imuDeskewBuf_.pop_front();
+                });
+            RCLCPP_INFO(this->get_logger(),
+                "[IMU deskew] Subscribed to '%s' for gyro rotation-only deskew. "
+                "IMU→sensor extrinsic will be looked up on first scan.",
+                params->deskewImuTopic.c_str());
+        }
+
+        mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+            "map", rclcpp::QoS(1).reliable().transient_local());
         inputFiltersScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_input_filters", 1);
         deskewingScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_deskew", 1);
         alignedScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>(
@@ -219,13 +246,13 @@ public:
         inputSurfaceNormalFilter_ =
             PM::get().DataPointsFilterRegistrar.create(
                 "SurfaceNormalDataPointsFilter",
-                {{"knn", PointMatcherSupport::toParam(12)}}
+                {{"knn", PointMatcherSupport::toParam(5)}}
             );
 
         mapSurfaceNormalFilter_ =
             PM::get().DataPointsFilterRegistrar.create(
                 "SurfaceNormalDataPointsFilter",
-                {{"knn", PointMatcherSupport::toParam(12)}}
+                {{"knn", PointMatcherSupport::toParam(10)}}
             );
 
         deterministicMapVoxelFilter_ =
@@ -251,6 +278,19 @@ public:
         if (mapPublisherThread.joinable())    { mapPublisherThread.join(); }
         if (mapTfPublisherThread.joinable())  { mapTfPublisherThread.join(); }
         if (mapperShutdownThread.joinable())  { mapperShutdownThread.join(); }
+        // Save map/trajectory on any shutdown (SIGINT, timeout, or error).
+        // Guards hasSavedMap_ to avoid double-saving when mapperShutdownLoop
+        // already triggered a save before the destructor runs.
+        if (!hasSavedMap_)
+        {
+            try {
+                saveMap(params->finalMapFileName);
+                saveTrajectory(params->finalTrajectoryFileName);
+                hasSavedMap_ = true;
+            } catch (const std::exception& e) {
+                RCLCPP_ERROR(this->get_logger(), "Failed to save on shutdown: %s", e.what());
+            }
+        }
         RCLCPP_INFO(this->get_logger(), "MapperNode shutdown complete.");
     }
 
@@ -314,10 +354,10 @@ private:
     // Node-side deterministic insertion avoids the unsafe second ICP pass that
     // was contaminating the map. Spacing is parameterized because replay and
     // low-speed articulated motion need updates before leaving the first scan.
-    // Map publication: only publish points within this XY radius of the robot.
-    // Reduces a 200K-point global map to ~20-40K points locally visible,
-    // cutting Foxglove WebSocket bandwidth by 80-90%.
-    static constexpr float mapPublishRadiusM_ = 40.0f;
+    // Map publication crop radius is ROS parameter map_publish_radius_m.
+    // 0.0 = publish full map. When set (e.g. 40.0 m), reduces a 200K-pt global
+    // map to ~20-40K locally visible pts, cutting Foxglove WebSocket bandwidth
+    // by 80-90%. Configured per scenario via MAPPING_MAP_PUBLISH_RADIUS_M env var.
     // ICP map trimming is parameterized. Keep it enabled online to bound KDTree
     // cost, but disable it for offline ground-truth map generation.
     // Deskewing is disabled for scans acquired during fast articulated turns.
@@ -326,19 +366,24 @@ private:
     // in Deskewer introduces errors during non-linear articulation maneuvers that exceed
     // the correction it provides. Disable deskewing above this threshold.
     static constexpr double maxDeskewYawRateDegS_ = 60.0;
-    static constexpr double maxMapUpdateTranslationCorrectionM_ = 1.50;
-    static constexpr double maxMapUpdateRotationCorrectionDeg_ = 12.0;
+    // Map-update correction limits are ROS parameters
+    // (max_map_update_translation_correction_m / _rotation_correction_deg).
+    // The translation limit measures PRIOR error, not registration quality:
+    // with wheel slip the prior can be 2-3 m off while ICP still aligns the
+    // scan correctly. A hard 1.5 m limit froze the map mid-run and caused a
+    // rejection cascade once the robot outran the frozen map.
     static constexpr double maxMapUpdateYawStepDeg_ = 45.0;
     static constexpr double maxMapUpdateZStepM_ = 0.50;
     static constexpr double mapOverlapNearVoxelM_ = 0.15;
     static constexpr double mapOverlapLooseVoxelM_ = 0.35;
-    static constexpr double minPoseOverlapNearRatio_ = 0.25;
-    static constexpr double minPoseOverlapLooseRatio_ = 0.45;
-    static constexpr double minMapOverlapNearRatio_ = 0.30;
-    static constexpr double minMapOverlapLooseRatio_ = 0.50;
+    // Pose/insertion overlap gates are ROS parameters (NodeParameters):
+    // min_pose_overlap_{near,loose}_ratio, min_map_overlap_{near,loose}_ratio.
+    // A compile-time insertion gate above the pose gate creates an exploration
+    // deadlock: scans in the hysteresis band are tracked but never inserted,
+    // the map freezes and every following scan is rejected.
     static constexpr int minMapOverlapSamples_ = 200;
 
-    // ── Safe map publication buffer ────────────────────────────────────────────
+    // ── Safe map publication buffer ──
     // Instead of calling mapper->getNewLocalMap() from the publisher thread
     // (which may swap Map's internal double-buffer and leave isLocalPointCloudEmpty()=true,
     // causing the next processInput to skip ICP and jump to raw odom), we maintain
@@ -382,7 +427,17 @@ private:
     PM::TransformationParameters lastAcceptedRobotToMap_;
     PM::TransformationParameters initialAcceptedRobotToMap_;
     bool hasInitialAcceptedRobotToMap_{false};
+    bool hasSavedMap_{false};
     std::unique_ptr<Deskewer> deskewer;
+
+    // ── IMU gyro deskew buffer (only used when deskew_source="imu") ──
+    // ImuSample = std::pair<int64_t stamp_ns, Eigen::Vector3d omega_imu_frame>
+    std::deque<Deskewer::ImuSample> imuDeskewBuf_;
+    std::mutex imuDeskewBufMutex_;
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imuDeskewSubscription_;
+    // Static rotation: IMU frame → sensor/LiDAR frame.  Looked up once from TF_static.
+    Eigen::Matrix3d R_sensor_imu_{Eigen::Matrix3d::Identity()};
+    bool imuExtrinsicReady_{false};
 
     static double yawFromTransform(const PM::TransformationParameters& transform)
     {
@@ -612,15 +667,15 @@ private:
     bool mapOverlapTooLow(const MapOverlapStats& stats) const
     {
         return stats.sampled >= minMapOverlapSamples_ &&
-               (stats.nearRatio < minMapOverlapNearRatio_ ||
-                stats.looseRatio < minMapOverlapLooseRatio_);
+               (stats.nearRatio < params->minMapOverlapNearRatio ||
+                stats.looseRatio < params->minMapOverlapLooseRatio);
     }
 
     bool poseOverlapTooLow(const MapOverlapStats& stats) const
     {
         return stats.sampled >= minMapOverlapSamples_ &&
-               (stats.nearRatio < minPoseOverlapNearRatio_ ||
-                stats.looseRatio < minPoseOverlapLooseRatio_);
+               (stats.nearRatio < params->minPoseOverlapNearRatio ||
+                stats.looseRatio < params->minPoseOverlapLooseRatio);
     }
 
     bool registrationPoseOverlapsCurrentMap(
@@ -644,6 +699,38 @@ private:
             std::chrono::steady_clock::now() - overlapStart).count();
         return !poseOverlapTooLow(overlap);
     }
+
+    // ── IMU deskew helpers ──
+
+    // Look up the static rotation from the IMU frame to the sensor/LiDAR frame.
+    // Called lazily on first scan to avoid TF-static race at startup.
+    // Returns true and sets R_sensor_imu_ on success; false leaves previous value.
+    bool tryLookupImuSensorExtrinsic(const std::string& sensorFrame)
+    {
+        try
+        {
+            geometry_msgs::msg::TransformStamped tf =
+                tfBuffer->lookupTransform(sensorFrame, params->deskewImuFrame, rclcpp::Time(0));
+            const auto& q = tf.transform.rotation;
+            R_sensor_imu_ = Eigen::Quaterniond(q.w, q.x, q.y, q.z).toRotationMatrix();
+            imuExtrinsicReady_ = true;
+            RCLCPP_INFO(this->get_logger(),
+                "[IMU deskew] %s → %s extrinsic acquired (R_sensor_imu norm check: %.4f).",
+                params->deskewImuFrame.c_str(), sensorFrame.c_str(),
+                R_sensor_imu_.determinant());
+            return true;
+        }
+        catch (const tf2::TransformException& ex)
+        {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                "[IMU deskew] Cannot look up %s → %s: %s. "
+                "Deskew will retry on the next scan.",
+                params->deskewImuFrame.c_str(), sensorFrame.c_str(), ex.what());
+            return false;
+        }
+    }
+
+    // ── publishAlignedScan ──
 
     void publishAlignedScan(
         const PM::DataPoints& inputInSensorFrame,
@@ -813,6 +900,7 @@ private:
         PM::DataPoints inputInMapFrame =
             transformation->compute(inputInSensorFrame, acceptedSensorToMap);
         const bool creatingMap = currentMap.getNbPoints() == 0;
+
         RCLCPP_INFO(this->get_logger(),
             "Deterministic map update started: mode=%s current_map_pts=%d scan_pts=%d pose={%s}",
             creatingMap ? "create" : "point_distance",
@@ -846,9 +934,9 @@ private:
                     "Check /mapping/aligned_scan in Foxglove: if it is also misaligned, the issue is ICP/odom/TF; "
                     "if it is aligned while /mapping/map is broken, the map insertion path is at fault.",
                     overlap.nearRatio,
-                    minMapOverlapNearRatio_,
+                    params->minMapOverlapNearRatio,
                     overlap.looseRatio,
-                    minMapOverlapLooseRatio_,
+                    params->minMapOverlapLooseRatio,
                     overlap.sampled);
                 return false;
             }
@@ -857,7 +945,7 @@ private:
         PM::DataPoints updatedMap = creatingMap ? inputInMapFrame : currentMap;
         if (!creatingMap) {
             deterministicMapperModule_->inPlaceUpdateMap(
-                inputInSensorFrame, updatedMap, acceptedSensorToMap);
+                inputInMapFrame, updatedMap, acceptedSensorToMap);
         }
         normalizeMapNormals(updatedMap);
         mapper->setMap(updatedMap);
@@ -873,7 +961,7 @@ private:
             else
             {
                 globalOutputMapperModule_->inPlaceUpdateMap(
-                    inputInSensorFrame, globalOutputMap_, acceptedSensorToMap);
+                    inputInMapFrame, globalOutputMap_, acceptedSensorToMap);
             }
             ++globalOutputMapUpdates_;
         }
@@ -910,8 +998,8 @@ private:
 
     bool mapUpdateQualityGood(const RegistrationQualityGate::Result& qgResult) const
     {
-        return qgResult.translation_correction_m <= maxMapUpdateTranslationCorrectionM_ &&
-               qgResult.rotation_correction_deg <= maxMapUpdateRotationCorrectionDeg_;
+        return qgResult.translation_correction_m <= params->maxMapUpdateTranslationCorrectionM &&
+               qgResult.rotation_correction_deg <= params->maxMapUpdateRotationCorrectionDeg;
     }
 
     bool seedInitialMapIfNeeded(
@@ -937,6 +1025,7 @@ private:
         PM::DataPoints initialMap = transformation->compute(inputInSensorFrame, sensorToMap);
         recomputeMapNormals(initialMap);
         mapper->setMap(initialMap);
+
         if (params->enableGlobalOutputMap)
         {
             std::lock_guard<std::mutex> lock(globalOutputMapMutex_);
@@ -954,7 +1043,7 @@ private:
         return true;
     }
 
-    // ── cropPointsToRadius ────────────────────────────────────────────────────
+    // ── cropPointsToRadius ──
     // Returns a new DataPoints containing only columns within radiusM (XY) of center.
     // Uses 2D distance only to avoid Z artifacts from slope/pitch.
     static PM::DataPoints cropPointsToRadius(
@@ -1001,20 +1090,23 @@ private:
             return;
         }
 
-        // View-frustum culling: publish only points within mapPublishRadiusM_ of the
-        // current robot position. Reduces message size by 80-90% for large maps,
-        // keeping Foxglove WebSocket bandwidth within WiFi budget (~2-3 MB/s vs 12 MB/s).
+        // View-frustum culling: when map_publish_radius_m > 0, publish only points
+        // within that XY radius of the robot. Reduces message size by 80-90% for
+        // large maps, keeping Foxglove WebSocket bandwidth within WiFi budget.
+        // When map_publish_radius_m == 0 the full map is published (bag replay,
+        // offline ground-truth generation).
         const int fullMapPts = static_cast<int>(mapSnapshot.getNbPoints());
-        if (hasInitialAcceptedRobotToMap_)
+        if (hasInitialAcceptedRobotToMap_ && params->mapPublishRadiusM > 0.0)
         {
             const Eigen::Vector2f robotXY = lastAcceptedRobotToMap_.topRightCorner(2, 1);
-            mapSnapshot = cropPointsToRadius(mapSnapshot, robotXY, mapPublishRadiusM_);
+            mapSnapshot = cropPointsToRadius(
+                mapSnapshot, robotXY, static_cast<float>(params->mapPublishRadiusM));
             const int culledPts = static_cast<int>(mapSnapshot.getNbPoints());
             if (culledPts < fullMapPts)
             {
                 RCLCPP_DEBUG(this->get_logger(),
                     "Map publication: culled %d → %d pts (radius=%.0fm).",
-                    fullMapPts, culledPts, static_cast<double>(mapPublishRadiusM_));
+                    fullMapPts, culledPts, params->mapPublishRadiusM);
             }
         }
 
@@ -1048,6 +1140,22 @@ private:
             return true;
         }
 
+        // Absolute yaw step check — independent of dt.
+        // dtSecAccepted grows after rejection cascades, making the yaw rate check
+        // ineffective (90°/10s < 90 deg/s). A per-scan absolute cap catches any
+        // sudden rotation regardless of how long the cascade lasted.
+        const double yawStepDeg =
+            std::abs(wrapToPi(yawFromTransform(robotToMap) - yawFromTransform(lastAcceptedRobotToMap_))) *
+            180.0 / M_PI;
+        if (yawStepDeg > params->maxPoseYawStepDeg)
+        {
+            std::ostringstream ss;
+            ss << "published pose yaw step too high: " << yawStepDeg << " deg > "
+               << params->maxPoseYawStepDeg << " deg (absolute cap, dt=" << dtSecAccepted << " s)";
+            reason = ss.str();
+            return false;
+        }
+
         const int dim = static_cast<int>(robotToMap.rows()) - 1;
         const Eigen::VectorXf delta =
             robotToMap.topRightCorner(dim, 1) -
@@ -1056,11 +1164,11 @@ private:
         // dtSecAccepted = temps depuis la dernière acceptation — cohérent avec la
         // référence lastAcceptedRobotToMap_. Évite speed=xy/50ms qui rejette les bons
         // scans après cascade de rejets, et laisse passer des pas backwards <0.4m.
-        const double speed = xy / dtSecAccepted;
+        // Clamped to 10 s max so the rate-based checks don't degrade after long cascades.
+        const double dtClamped = std::min(dtSecAccepted, 10.0);
+        const double speed = xy / dtClamped;
         const double z = (dim >= 3) ? std::abs(static_cast<double>(delta(2))) : 0.0;
-        const double yawRateDegS =
-            std::abs(wrapToPi(yawFromTransform(robotToMap) - yawFromTransform(lastAcceptedRobotToMap_))) *
-            180.0 / M_PI / dtSecAccepted;
+        const double yawRateDegS = yawStepDeg / dtClamped;
         const Eigen::VectorXf odomDelta =
             odomPredictedRobotToMap.topRightCorner(dim, 1) -
             lastAcceptedRobotToMap_.topRightCorner(dim, 1);
@@ -1089,26 +1197,27 @@ private:
         }
 
         const double maxStepForGap =
-            std::max(params->maxPoseStepM, params->maxVelocityMs * dtSecAccepted * 1.25);
+            std::max(params->maxPoseStepM, params->maxVelocityMs * dtClamped * 1.25);
         if (xy > maxStepForGap) {
             std::ostringstream ss;
             ss << "published pose xy step too high: " << xy << " m > "
                << maxStepForGap << " m (base_limit=" << params->maxPoseStepM
-               << " m dt=" << dtSecAccepted << " s)";
+               << " m dt=" << dtClamped << " s)";
             reason = ss.str();
             return false;
         }
         if (speed > params->maxVelocityMs) {
             std::ostringstream ss;
             ss << "published pose speed too high: " << speed << " m/s > "
-               << params->maxVelocityMs << " m/s (xy_step=" << xy << " m dt=" << dtSecAccepted << " s)";
+               << params->maxVelocityMs << " m/s (xy_step=" << xy << " m dt=" << dtClamped << " s)";
             reason = ss.str();
             return false;
         }
         if (yawRateDegS > params->maxYawRateDegS) {
             std::ostringstream ss;
             ss << "published pose yaw rate too high: " << yawRateDegS << " deg/s > "
-               << params->maxYawRateDegS << " deg/s";
+               << params->maxYawRateDegS << " deg/s (yaw_step=" << yawStepDeg
+               << " deg dt_clamped=" << dtClamped << " s)";
             reason = ss.str();
             return false;
         }
@@ -1277,7 +1386,7 @@ private:
 
     void gotInput(PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& cloudStamp)
     {
-        // ── Timestamp validation ───────────────────────────────────────────────
+        // ── Timestamp validation ──
         if (cloudStamp.nanoseconds() == 0)
         {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
@@ -1288,15 +1397,65 @@ private:
         rclcpp::Time timeStamp = cloudStamp;
         const auto processingStart = std::chrono::steady_clock::now();
 
+        // ── Reset idle timer on every arriving scan ──
+        // Must be updated here (not just on accepted scans) so the mapper does
+        // not shut down during rejection cascades (e.g. broken odometry producing
+        // Z jumps that reject every scan for >10s).
+        {
+            std::lock_guard<std::mutex> lk(idleTimeLock);
+            lastTimeInputWasProcessed = std::chrono::steady_clock::now();
+        }
+
         try
         {
-            // ── Deskew FIRST on raw cloud ─────────────────────────────────────────
-            // Doit etre fait AVANT applyInputFilters: VoxelGridDataPointsFilter calcule
-            // la moyenne des timestamps (int64) sur les points d'un voxel. Avec des
-            // timestamps absolus Hesai ~1.779e18 ns, la somme de >=6 points depasse
-            // INT64_MAX (9.22e18) → overflow → valeurs negatives → TF lookup echoue.
-            // Sur le nuage brut (~24k points), les timestamps viennent du driver et sont
-            // valides (par paquet UDP, ~20-100 valeurs distinctes). Aucun overflow.
+            // ── Transform to filtering frame (self-filter bboxes in base_link) ──
+            // filtering_frame est typiquement base_link: les bboxes dans _config.yaml
+            // sont exprimees dans ce frame (invariant par rapport a l'orientation du capteur).
+            // Le TF hesai_lidar→base_link est statique (URDF fixed joint), toujours disponible.
+            const auto t1_ff = std::chrono::steady_clock::now();
+            PM::TransformationParameters sensorToFilteringFrame;
+            bool usingFilteringFrame = false;
+            if (!params->filteringFrame.empty() && params->filteringFrame != sensorFrame)
+            {
+                try
+                {
+                    sensorToFilteringFrame = findTransform(
+                        sensorFrame, params->filteringFrame, timeStamp, input.getHomogeneousDim());
+                    input.features = sensorToFilteringFrame * input.features;
+                    usingFilteringFrame = true;
+                }
+                catch (const tf2::TransformException& ex)
+                {
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                        "filtering_frame '%s' TF unavailable (%s). Falling back to sensor frame.",
+                        params->filteringFrame.c_str(), ex.what());
+                }
+            }
+            const double ffMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t1_ff).count();
+
+            const auto t2_input = std::chrono::steady_clock::now();
+            mapper->applyInputFilters(input);
+            const double inputMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t2_input).count();
+
+            // Retransformer dans le frame capteur pour l'ICP et le deskew.
+            if (usingFilteringFrame)
+            {
+                input.features = sensorToFilteringFrame.inverse() * input.features;
+            }
+
+            publishAfterInputFilters(input, sensorFrame, cloudStamp);
+
+            // ── Deskew on filtered cloud (sensor frame) ──
+            // Done AFTER BBox+RandomSampling: the cloud is ~11k pts instead of ~24k,
+            // so the TF cache build and OpenMP application loop both run on fewer points.
+            // Previously done before filters because VoxelGridDataPointsFilter averaged
+            // the times field (int64, ~1.78e18 ns) across voxel points causing int64
+            // overflow → negative timestamps → TF lookup failures. RandomSampling does
+            // not touch the times field, so the constraint no longer applies.
+            // Precondition: cloud must be in sensorFrame (guaranteed by retransform above).
+            const auto t0_deskew = std::chrono::steady_clock::now();
             if (params->deskew)
             {
                 // Skip deskewing during fast articulated turns. The linear TF interpolation
@@ -1321,9 +1480,41 @@ private:
                     }
                 }
 
-                if (deskewAllowed && deskewer->deskewCloud(input, sensorFrame))
+                bool deskewOk = false;
+                if (deskewAllowed)
+                {
+                    if (params->deskewSource == "imu")
+                    {
+                        // IMU rotation-only deskew: immune to odom angular-rate errors.
+                        // TF deskew would bake wheel-slip / IMU-bias into every inserted
+                        // scan, producing the swirl / double-tree artefact.
+                        if (!imuExtrinsicReady_)
+                            tryLookupImuSensorExtrinsic(sensorFrame);
+                        if (imuExtrinsicReady_)
+                        {
+                            std::vector<Deskewer::ImuSample> imuSnap;
+                            {
+                                std::lock_guard<std::mutex> lk(imuDeskewBufMutex_);
+                                imuSnap.assign(imuDeskewBuf_.begin(), imuDeskewBuf_.end());
+                            }
+                            deskewOk = deskewer->deskewCloudImu(input, imuSnap, R_sensor_imu_);
+                        }
+                    }
+                    else
+                    {
+                        // Legacy TF-odom deskew (default for live robot).
+                        deskewOk = deskewer->deskewCloud(input, sensorFrame);
+                    }
+                }
+
+                if (deskewOk)
                 {
                     publishAfterDeskew(input, sensorFrame, cloudStamp);
+                    // Deskew rotated point positions; any pre-computed surface normals
+                    // in the cloud are now stale. Remove them so ensureInputNormals()
+                    // recomputes on the corrected geometry.
+                    if (input.descriptorExists("normals"))
+                        input.removeDescriptor("normals");
                     // Only update timestamp when using absolute_ns — other modes cannot
                     // give a reliable absolute ROS time from per-point data alone.
                     if (params->deskewTimeMode == "absolute_ns")
@@ -1343,50 +1534,27 @@ private:
                     }
                 }
             }
+            const double deskewMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0_deskew).count();
 
-            // ── Transform to filtering frame (self-filter bboxes in base_link) ──────
-            // filtering_frame est typiquement base_link: les bboxes dans _config.yaml
-            // sont exprimees dans ce frame (invariant par rapport a l'orientation du capteur).
-            // Le TF hesai_lidar→base_link est statique (URDF fixed joint), toujours disponible.
-            PM::TransformationParameters sensorToFilteringFrame;
-            bool usingFilteringFrame = false;
-            if (!params->filteringFrame.empty() && params->filteringFrame != sensorFrame)
-            {
-                try
-                {
-                    sensorToFilteringFrame = findTransform(
-                        sensorFrame, params->filteringFrame, timeStamp, input.getHomogeneousDim());
-                    input.features = sensorToFilteringFrame * input.features;
-                    usingFilteringFrame = true;
-                }
-                catch (const tf2::TransformException& ex)
-                {
-                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                        "filtering_frame '%s' TF unavailable (%s). Falling back to sensor frame.",
-                        params->filteringFrame.c_str(), ex.what());
-                }
-            }
-
-            mapper->applyInputFilters(input);
-
-            // Retransformer dans le frame capteur pour l'ICP.
-            if (usingFilteringFrame)
-            {
-                input.features = sensorToFilteringFrame.inverse() * input.features;
-            }
-
+            const auto t3_normals = std::chrono::steady_clock::now();
             ensureInputNormals(input);
+            const double normalsMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t3_normals).count();
 
-            RCLCPP_DEBUG_STREAM(this->get_logger(), "Input filters: "
-                << std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - processingStart).count() << " ms");
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 10000,
+                "[TIMING] ff=%.0fms input=%.0fms deskew=%.0fms normals=%.0fms",
+                ffMs, inputMs, deskewMs, normalsMs);
+
+            const double filterMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - processingStart).count();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Input filters: " << filterMs << " ms");
             RCLCPP_DEBUG(this->get_logger(),
                 "Filtered input ready: frame=%s stamp=%.9f pts=%d normal_ok=%d",
                 sensorFrame.c_str(),
                 static_cast<double>(timeStamp.nanoseconds()) * 1e-9,
                 static_cast<int>(input.getNbPoints()),
                 input.descriptorExists("normals", static_cast<unsigned>(input.getEuclideanDim())));
-            publishAfterInputFilters(input, sensorFrame, cloudStamp);
 
             // Pas de fallback Time(0) pour une TF dynamique: un prior perime
             // envoie ICP au mauvais endroit et peut causer un jump de pose.
@@ -1415,19 +1583,20 @@ private:
             const bool seededInitialMap =
                 params->isMapping && seedInitialMapIfNeeded(input, sensorToMapBeforeUpdate);
 
-            // ── ICP Phase 1: localisation (map non modifiee) ────────────────────
+            // ── ICP Phase 1: localisation (map non modifiee) ──
             // Une seule passe fine avec prior odom. Le M-estimateur Cauchy dans la
             // chaine outlier filters (_config.yaml) cree un paysage de cout lisse
             // qui evite les minima locaux sans necessiter de passe coarse preliminaire.
             // Budget: ~25ms (fine) + ~5ms (Phase 2) = 30ms < 50ms (20Hz).
             const bool shouldMap = params->isMapping;
+
             mapper->setIsMapping(false);
 
             const auto icpStart = std::chrono::steady_clock::now();
             const auto steadyTs = std::chrono::time_point<std::chrono::steady_clock>(
                 std::chrono::nanoseconds(timeStamp.nanoseconds()));
 
-            // ── Passe fine (prior = odom, mapping OFF) ──────────────────────────
+            // ── Passe fine (prior = odom, mapping OFF) ──
             PM::TransformationParameters sensorToMapAfterUpdate =
                 sensorToMapBeforeUpdate;
             bool usedOdomPriorFallback = false;
@@ -1545,7 +1714,7 @@ private:
                 usedOdomPriorFallback ? "Odom prior fallback" : "ICP",
                 transformSummary(sensorToMapAfterUpdate).c_str());
 
-            // ── Quality gate ─────────────────────────────────────────────────
+            // ── Quality gate ──
             // dtSec pour le gate velocity/yaw = temps depuis le DERNIER SCAN ACCEPTE.
             // previousTimeStamp est mis a jour a chaque scan (meme rejects), donc
             // dtSec = ~50ms toujours. Or translation_correction = derive odom
@@ -1676,16 +1845,16 @@ private:
                     ++scansRejected_;
                     std::ostringstream reason;
                     reason << "registration overlap too low: near "
-                           << registrationOverlap.nearRatio << " < " << minPoseOverlapNearRatio_
-                           << " or loose " << registrationOverlap.looseRatio << " < " << minPoseOverlapLooseRatio_;
+                           << registrationOverlap.nearRatio << " < " << params->minPoseOverlapNearRatio
+                           << " or loose " << registrationOverlap.looseRatio << " < " << params->minPoseOverlapLooseRatio;
                     RCLCPP_WARN(this->get_logger(),
                         "Scan rejected after ICP because aligned scan does not overlap current map enough "
                         "(near %.3f threshold %.3f, loose %.3f threshold %.3f, sampled=%d, time=%.1fms). "
                         "Rejecting odom pose before publication to prevent map/odom cascade.",
                         registrationOverlap.nearRatio,
-                        minPoseOverlapNearRatio_,
+                        params->minPoseOverlapNearRatio,
                         registrationOverlap.looseRatio,
-                        minPoseOverlapLooseRatio_,
+                        params->minPoseOverlapLooseRatio,
                         registrationOverlap.sampled,
                         registrationOverlapMs);
                     publishScanStatus(timeStamp, false, reason.str(),
@@ -1699,7 +1868,7 @@ private:
                 }
             }
 
-            // ── Map update: deterministic insertion at the accepted pose ───────
+            // ── Map update: deterministic insertion at the accepted pose ──
             // Never rerun processInput() with mapping enabled here. A second ICP
             // pass can converge to a different local minimum while also inserting
             // points, and the mapper API has no rollback. That exact mismatch
@@ -1727,16 +1896,17 @@ private:
                         "Skipping map insertion for accepted scan: ICP correction %.3fm %.1fdeg exceeds map-update limits %.3fm %.1fdeg. Odom/path still published.",
                         qgResult.translation_correction_m,
                         qgResult.rotation_correction_deg,
-                        maxMapUpdateTranslationCorrectionM_,
-                        maxMapUpdateRotationCorrectionDeg_);
+                        params->maxMapUpdateTranslationCorrectionM,
+                        params->maxMapUpdateRotationCorrectionDeg);
                 }
 
-                // ── Periodic map trimming: bound KDTree size for ICP ─────────────
-                // Every mapTrimIntervalScans_ accepted scans, trim the global map to
-                // mapTrimRadiusM_ around the robot if it has grown too large.
-                // This keeps ICP registration time bounded regardless of total mapped area.
-                // Note: the trimmed map is still used for ICP; the full history is lost.
-                // Acceptable for online mapping where the robot moves forward.
+                // ── Periodic map trimming (legacy, disabled for large-area mapping) ──
+                // Permanently crops the global map — discards data outside mapTrimRadiusM_.
+                // Disabled (enable_map_trimming=false) in favour of the library's cell-based
+                // management: cells outside BUFFER_SIZE are unloaded to disk and reloaded
+                // when the robot returns, so ICP always runs on a bounded local map without
+                // losing global history. Enable only for short-range sessions where revisiting
+                // is not needed and RAM is critically limited.
                 if (mapChanged &&
                     params->enableMapTrimming &&
                     scansAccepted_.load() % static_cast<uint64_t>(params->mapTrimIntervalScans) == 0)
@@ -1761,7 +1931,7 @@ private:
 
                 mapper->setIsMapping(true);
 
-                // ── Snapshot de la map pour publication — DANS le thread gotInput ───
+                // ── Snapshot de la map pour publication — DANS le thread gotInput ──
                 // On n'appelle PAS mapper->getNewLocalMap() depuis mapPublisherLoop:
                 // getNewLocalPointCloud() peut swapper les buffers internes de Map,
                 // ce qui rend isLocalPointCloudEmpty()=true et casse le scan suivant
@@ -1784,7 +1954,7 @@ private:
                 mapper->setIsMapping(false);
             }
 
-            // ── Update odom → map transform only after both gates accepted ───
+            // ── Update odom → map transform only after both gates accepted ──
             if (!hasInitialAcceptedRobotToMap_)
             {
                 initialAcceptedRobotToMap_ = robotToMap;
@@ -1805,7 +1975,7 @@ private:
                         std::chrono::nanoseconds(timeStamp.nanoseconds())));
             }
 
-            // ── Publish odometry ──────────────────────────────────────────────
+            // ── Publish odometry ──
             nav_msgs::msg::Odometry odomMsgOut =
                 PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(
                     robotToMap, params->mapFrame, params->robotFrame, timeStamp);
@@ -1829,7 +1999,7 @@ private:
 
             odomPublisher->publish(odomMsgOut);
 
-            // ── Trajectoire (nav_msgs/Path) pour Foxglove ──────────────────────
+            // ── Trajectoire (nav_msgs/Path) pour Foxglove ──
             nav_msgs::msg::Path pathToPublish;
             {
                 std::lock_guard<std::mutex> lk(trajectoryMutex_);
@@ -1869,16 +2039,20 @@ private:
                 lastTimeInputWasProcessed = std::chrono::steady_clock::now();
             }
 
-            // ── Log diagnostique detaille (scan accepte uniquement) ───────────
+            // ── Log diagnostique detaille (scan accepte uniquement) ──
             {
+                const double totalMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - processingStart).count();
                 const uint64_t accepted = scansAccepted_.load();
                 const uint64_t rejected = scansRejected_.load();
                 const uint64_t total = accepted + rejected;
                 const int pct = (total > 0) ? static_cast<int>(100 * accepted / total) : 0;
                 RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                    "[ICP] pts=%d icp=%.0fms tr=%.3fm rot=%.1fdeg vel=%.1fm/s pose=(%.2f,%.2f,%.1fdeg) map=%lu | accepted=%lu rejected=%lu (%d%%)",
+                    "[ICP] pts=%d filter=%.0fms icp=%.0fms total=%.0fms tr=%.3fm rot=%.1fdeg vel=%.1fm/s pose=(%.2f,%.2f,%.1fdeg) map=%lu | accepted=%lu rejected=%lu (%d%%)",
                     static_cast<int>(input.getNbPoints()),
+                    filterMs,
                     icpMs,
+                    totalMs,
                     qgResult.translation_correction_m,
                     qgResult.rotation_correction_deg,
                     qgResult.velocity_ms,
@@ -1887,6 +2061,13 @@ private:
                     yawFromTransform(robotToMap) * 180.0 / M_PI,
                     static_cast<unsigned long>(mapper->getMap().getNbPoints()),
                     accepted, rejected, pct);
+                if (totalMs > static_cast<double>(params->maxRegistrationTimeMs))
+                {
+                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                        "[ICP] slow scan: total=%.0fms > budget=%.0fms (filter=%.0fms icp=%.0fms)",
+                        totalMs, static_cast<double>(params->maxRegistrationTimeMs),
+                        filterMs, icpMs);
+                }
             }
         }
         catch (const tf2::TransformException& ex)

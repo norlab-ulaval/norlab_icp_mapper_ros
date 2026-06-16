@@ -53,6 +53,11 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<std::string>("deskew_fixed_frame", "odom");
     node.declare_parameter<std::string>("deskew_time_mode", "absolute_ns");
     node.declare_parameter<std::string>("deskew_time_field", "time");
+    // IMU-driven rotation-only deskew. "tf" = legacy odom-based; "imu" = gyro-based.
+    // Replay should use "imu" to avoid odom-error→swirl in the map.
+    node.declare_parameter<std::string>("deskew_source", "tf");
+    node.declare_parameter<std::string>("deskew_imu_topic", "/mti100/data");
+    node.declare_parameter<std::string>("deskew_imu_frame", "imu_link");
 
     // ── TF ────────────────────────────────────────────────────────────────────
     node.declare_parameter<int>("tf_lookup_timeout_ms", 200);
@@ -60,12 +65,18 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     // ── Map output compression ────────────────────────────────────────────────
     node.declare_parameter<double>("compression_voxel_size", 0.5);
 
+    // ── Map publication crop ──────────────────────────────────────────────────
+    // 0.0 = publish full map. Set to e.g. 40.0 to crop to a 40m bubble around
+    // the robot — reduces Foxglove WebSocket bandwidth by ~80-90% on large maps.
+    node.declare_parameter<double>("map_publish_radius_m", 0.0);
+
     // ── Quality gate ──────────────────────────────────────────────────────────
     node.declare_parameter<int>("min_input_points", 100);
     node.declare_parameter<double>("max_translation_correction", 2.0);
     node.declare_parameter<double>("max_rotation_correction_deg", 30.0);
     node.declare_parameter<double>("max_velocity_ms", 20.0);
     node.declare_parameter<double>("max_yaw_rate_deg_s", 90.0);
+    node.declare_parameter<double>("max_pose_yaw_step_deg", 30.0);
     node.declare_parameter<double>("max_pose_step_m", 2.0);
     node.declare_parameter<double>("max_z_jump_m", 0.75);
     node.declare_parameter<double>("max_registration_time_ms", 5000.0);
@@ -80,6 +91,12 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<int>("map_trim_interval_scans", 10);
     node.declare_parameter<double>("map_trim_radius_m", 40.0);
     node.declare_parameter<int>("max_map_points_before_trim", 120000);
+    node.declare_parameter<double>("min_pose_overlap_near_ratio", 0.25);
+    node.declare_parameter<double>("min_pose_overlap_loose_ratio", 0.45);
+    node.declare_parameter<double>("min_map_overlap_near_ratio", 0.30);
+    node.declare_parameter<double>("min_map_overlap_loose_ratio", 0.50);
+    node.declare_parameter<double>("max_map_update_translation_correction_m", 1.50);
+    node.declare_parameter<double>("max_map_update_rotation_correction_deg", 12.0);
 }
 
 void NodeParameters::retrieveParameters(rclcpp::Node& node)
@@ -120,6 +137,9 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     node.get_parameter("deskew_fixed_frame", deskewFixedFrame);
     node.get_parameter("deskew_time_mode", deskewTimeMode);
     node.get_parameter("deskew_time_field", deskewTimeField);
+    node.get_parameter("deskew_source", deskewSource);
+    node.get_parameter("deskew_imu_topic", deskewImuTopic);
+    node.get_parameter("deskew_imu_frame", deskewImuFrame);
 
     // ── TF ────────────────────────────────────────────────────────────────────
     node.get_parameter("tf_lookup_timeout_ms", tfLookupTimeoutMs);
@@ -127,12 +147,16 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     // ── Map output compression ────────────────────────────────────────────────
     node.get_parameter("compression_voxel_size", compressionVoxelSize);
 
+    // ── Map publication crop ──────────────────────────────────────────────────
+    node.get_parameter("map_publish_radius_m", mapPublishRadiusM);
+
     // ── Quality gate ──────────────────────────────────────────────────────────
     node.get_parameter("min_input_points", minInputPoints);
     node.get_parameter("max_translation_correction", maxTranslationCorrection);
     node.get_parameter("max_rotation_correction_deg", maxRotationCorrectionDeg);
     node.get_parameter("max_velocity_ms", maxVelocityMs);
     node.get_parameter("max_yaw_rate_deg_s", maxYawRateDegS);
+    node.get_parameter("max_pose_yaw_step_deg", maxPoseYawStepDeg);
     node.get_parameter("max_pose_step_m", maxPoseStepM);
     node.get_parameter("max_z_jump_m", maxZJumpM);
     node.get_parameter("max_registration_time_ms", maxRegistrationTimeMs);
@@ -147,6 +171,12 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     node.get_parameter("map_trim_interval_scans", mapTrimIntervalScans);
     node.get_parameter("map_trim_radius_m", mapTrimRadiusM);
     node.get_parameter("max_map_points_before_trim", maxMapPointsBeforeTrim);
+    node.get_parameter("min_pose_overlap_near_ratio", minPoseOverlapNearRatio);
+    node.get_parameter("min_pose_overlap_loose_ratio", minPoseOverlapLooseRatio);
+    node.get_parameter("min_map_overlap_near_ratio", minMapOverlapNearRatio);
+    node.get_parameter("min_map_overlap_loose_ratio", minMapOverlapLooseRatio);
+    node.get_parameter("max_map_update_translation_correction_m", maxMapUpdateTranslationCorrectionM);
+    node.get_parameter("max_map_update_rotation_correction_deg", maxMapUpdateRotationCorrectionDeg);
 }
 
 void NodeParameters::validateParameters() const
@@ -230,6 +260,17 @@ void NodeParameters::validateParameters() const
                 "deskew_time_mode must be one of: absolute_ns | relative_ns | relative_s | auto. "
                 "Got: " + deskewTimeMode);
         }
+        const std::set<std::string> valid_sources{"tf", "imu"};
+        if (valid_sources.find(deskewSource) == valid_sources.end())
+        {
+            throw std::runtime_error(
+                "deskew_source must be 'tf' or 'imu'. Got: " + deskewSource);
+        }
+        if (deskewSource == "imu" && deskewImuTopic.empty())
+        {
+            throw std::runtime_error(
+                "deskew_imu_topic must be set when deskew_source=imu.");
+        }
     }
 
     // ── TF ────────────────────────────────────────────────────────────────────
@@ -271,6 +312,11 @@ void NodeParameters::validateParameters() const
     {
         throw std::runtime_error(
             "max_yaw_rate_deg_s must be positive: " + std::to_string(maxYawRateDegS));
+    }
+    if (maxPoseYawStepDeg <= 0.0 || maxPoseYawStepDeg > 180.0)
+    {
+        throw std::runtime_error(
+            "max_pose_yaw_step_deg must be in (0, 180]: " + std::to_string(maxPoseYawStepDeg));
     }
     if (maxPoseStepM <= 0.0)
     {

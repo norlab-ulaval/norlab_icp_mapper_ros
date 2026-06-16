@@ -95,10 +95,11 @@ input:
       zMax:  2.20
       removeInside: 1
 
-  # High-quality sampling: keep 90% of the Hesai scan.
-  # (mtt branch used 0.3 — too aggressive, loses fine structure)
+  # Sampling: 65% of the Hesai scan (~15k pts).
+  # With a correct odom prior, ICP converges in <15 iter — more pts don't help but
+  # slow down every KD-tree query. 0.65 still gives excellent outdoor coverage.
   - RandomSamplingDataPointsFilter:
-      prob: 0.9
+      prob: 0.65
 
   # Required for DynamicPointsMapperModule ray-casting.
   - ObservationDirectionDataPointsFilter:
@@ -112,7 +113,7 @@ input:
 icp:
   matcher:
     KDTreeMatcher:
-      knn: 7          # 7 neighbours: more robust than 5 on sparse outdoor scans
+      knn: 5          # 5 neighbours: sufficient with a good odom prior (correct within ~5 cm).
       epsilon: 1
       maxDist: 2.0    # CRITICAL: was 200.0 in upstream 2.1.1 → caused false matches.
                       # 2.0 m prevents long-range false correspondences.
@@ -132,7 +133,7 @@ icp:
         minDiffTransErr: 0.01
         smoothLength: 4
     - CounterTransformationChecker:
-        maxIterationCount: 50
+        maxIterationCount: 20
     # Safety net: abort truly runaway ICP registrations.
     # Set wider than the quality gate (35 deg / 2.5 m) so this is a last resort,
     # not the primary rejection mechanism. During fast turns the initial alignment
@@ -155,6 +156,5 @@ post:
 
   # Compute surface normals on the map cloud.
   # REQUIRED by PointToPlaneErrorMinimizer for accurate normal-based alignment.
-  # knn=12 gives smoother normals on outdoor terrain.
   - SurfaceNormalDataPointsFilter:
-      knn: 12
+      knn: 8

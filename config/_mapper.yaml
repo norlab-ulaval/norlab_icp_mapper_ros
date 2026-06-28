@@ -36,7 +36,7 @@ input:
       yMin: -0.40
       yMax:  0.40
       zMin: -0.10
-      zMax:  0.80
+      zMax:  0.85
       removeInside: 1
 
   # ── Self-filter: Hesai XT-32 cage (sensor pod, y≈-0.05 in base_link) ──

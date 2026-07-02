@@ -78,7 +78,7 @@ public:
     bool deskewCloud(DP& cloud, const std::string& sensor_frame);
 
     // ── deskewCloudImu ────────────────────────────────────────────────────────
-    // Rotation-only deskew driven by IMU gyro, not TF odom.
+    // Gyro-driven deskew: rotation from the IMU, not TF odom.
     // This avoids the odom-error→swirl coupling: odom angular rate errors are
     // baked into every inserted scan when using TF deskew, producing the classic
     // "swirl" / "double-tree" map artefact even when the whole-scan ICP pose is
@@ -87,13 +87,21 @@ public:
     // imu_buf   : time-ordered IMU samples covering the scan time range.
     // R_sensor_imu : rotation from IMU frame to sensor/LiDAR frame
     //                (lookupTransform(sensor, imu_link, t=0).rotation).
+    // v_sensor_end : OPTIONAL sensor linear velocity at scan end, expressed in
+    //                the scan-end sensor frame (m/s), typically derived from
+    //                the odom TF over the scan span.  Compensates the ~v·0.1 m
+    //                translation smear that rotation-only deskew leaves at
+    //                speed.  Under slip the residual error is only the odom
+    //                velocity ERROR × scan span, far smaller than the full
+    //                translation smear.  Zero (default) = rotation-only.
     //
     // Returns true on success, false if skipped (empty buffer, missing time
     // field, coverage gap).  On false the cloud is left unmodified.
     bool deskewCloudImu(
         DP& cloud,
         const std::vector<ImuSample>& imu_buf,
-        const Eigen::Matrix3d& R_sensor_imu);
+        const Eigen::Matrix3d& R_sensor_imu,
+        const Eigen::Vector3d& v_sensor_end = Eigen::Vector3d::Zero());
 
 private:
     std::shared_ptr<tf2_ros::Buffer> tfBuffer_;

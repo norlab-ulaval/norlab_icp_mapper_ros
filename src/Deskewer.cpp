@@ -281,7 +281,8 @@ bool Deskewer::deskewCloud(DP& cloud, const std::string& sensor_frame)
 bool Deskewer::deskewCloudImu(
     DP& cloud,
     const std::vector<ImuSample>& imu_buf,
-    const Eigen::Matrix3d& R_sensor_imu)
+    const Eigen::Matrix3d& R_sensor_imu,
+    const Eigen::Vector3d& v_sensor_end)
 {
     const auto begin_wall = std::chrono::steady_clock::now();
 
@@ -341,16 +342,94 @@ bool Deskewer::deskewCloudImu(
             scan_start_ns * 1e-9, scan_end_ns * 1e-9);
     }
 
-    // ── Build rotation cache: (binned t_point) → 4×4 correction matrix ──
-    // We correct each point to the scan-end frame.
-    // Physics: robot rotated by ω*Δt between t_point and scan_end.
-    //   T_sensor@end_sensor@point = R(-ω_sensor, Δt)   [Δt = scan_end - t_point > 0]
-    // i.e. AngleAxis(-angle, ω_hat) with angle = ‖ω_sensor‖ * Δt.
-    //
-    // We use the same binned-cache pattern as deskewCloud() to avoid redundant
-    // Eigen operations for the thousands of points sharing the same time slot.
+    // ── Build rotation corrections by piecewise gyro integration ──
+    // The correction for a point captured at time t is the sensor-frame rotation
+    //   A(t) = R_ws(scan_end)^T · R_ws(t)      so that   p_end = A(t) · p_point.
+    // Body rates integrate right-multiplied, so walking backward from
+    // A(scan_end) = I over the IMU samples inside the scan span:
+    //   A(t_k) = A(t_{k+1}) · R(-ω_seg · Δt_seg)
+    // with ω_seg the trapezoidal mean of the two bounding samples (sensor frame).
+    // A constant-ω model applied over the whole [t_point, scan_end] interval is
+    // wrong whenever ω changes during the scan — precisely the aggressive-turn
+    // transients where deskew matters most. With a single IMU sample in range
+    // this degenerates to the constant-ω correction.
 
     const int64_t round_to = static_cast<int64_t>(roundToNs_);
+
+    // Sensor-frame angular rate of the sample nearest to t (imu_buf is sorted).
+    const auto omegaSensorAt = [&](int64_t t) -> Eigen::Vector3d
+    {
+        const auto cmp = [](const ImuSample& s, int64_t t_ns){ return s.first < t_ns; };
+        auto it = std::lower_bound(imu_buf.begin(), imu_buf.end(), t, cmp);
+        if (it == imu_buf.end())          { --it; }   // past-the-end → use last
+        else if (it != imu_buf.begin())
+        {
+            auto prev = std::prev(it);
+            if (std::abs(prev->first - t) <= std::abs(it->first - t))
+                it = prev;
+        }
+        return R_sensor_imu * it->second;
+    };
+
+    struct Knot
+    {
+        int64_t t_ns;
+        Eigen::Vector3d omega;  // sensor frame
+        Eigen::Matrix3d A;      // rotation to scan-end frame, filled backward
+    };
+    std::vector<Knot> knots;
+    knots.reserve(imu_buf.size() + 2);
+    knots.push_back({scan_start_ns, omegaSensorAt(scan_start_ns), Eigen::Matrix3d::Identity()});
+    for (const auto& sample : imu_buf)
+    {
+        if (sample.first <= knots.back().t_ns) continue;
+        if (sample.first >= scan_end_ns) break;
+        knots.push_back({sample.first, R_sensor_imu * sample.second, Eigen::Matrix3d::Identity()});
+    }
+    if (scan_end_ns > knots.back().t_ns)
+        knots.push_back({scan_end_ns, omegaSensorAt(scan_end_ns), Eigen::Matrix3d::Identity()});
+
+    for (int k = static_cast<int>(knots.size()) - 2; k >= 0; --k)
+    {
+        const Eigen::Vector3d omega_seg = 0.5 * (knots[k].omega + knots[k + 1].omega);
+        const double dt_seg_s = (knots[k + 1].t_ns - knots[k].t_ns) * 1e-9;
+        const double omega_norm = omega_seg.norm();
+        if (omega_norm > 1e-8 && dt_seg_s > 1e-9)
+        {
+            const Eigen::AngleAxisd aa(-omega_norm * dt_seg_s, omega_seg / omega_norm);
+            knots[k].A = knots[k + 1].A * aa.toRotationMatrix();
+        }
+        else
+        {
+            knots[k].A = knots[k + 1].A;
+        }
+    }
+
+    // A(t) for an arbitrary time inside the span: partial segment up to the
+    // next knot, then that knot's precomputed rotation to scan end.
+    const auto rotationToScanEnd = [&](int64_t t) -> Eigen::Matrix3d
+    {
+        const int64_t tc = std::clamp(t, knots.front().t_ns, knots.back().t_ns);
+        const auto cmpKnot = [](const Knot& k, int64_t t_ns){ return k.t_ns < t_ns; };
+        const size_t hiIdx = static_cast<size_t>(
+            std::lower_bound(knots.begin(), knots.end(), tc, cmpKnot) - knots.begin());
+        if (hiIdx == 0) return knots.front().A;
+        if (hiIdx >= knots.size()) return knots.back().A;
+        const Knot& lo = knots[hiIdx - 1];
+        const Knot& hi = knots[hiIdx];
+        const Eigen::Vector3d omega_seg = 0.5 * (lo.omega + hi.omega);
+        const double dt_s = (hi.t_ns - tc) * 1e-9;
+        const double omega_norm = omega_seg.norm();
+        if (omega_norm > 1e-8 && dt_s > 1e-9)
+        {
+            const Eigen::AngleAxisd aa(-omega_norm * dt_s, omega_seg / omega_norm);
+            return hi.A * aa.toRotationMatrix();
+        }
+        return hi.A;
+    };
+
+    // Same binned-cache pattern as deskewCloud(): thousands of points share
+    // each time slot, so the integration above runs once per bin.
     std::unordered_map<int64_t, Eigen::Matrix4f> rotCache;
     rotCache.reserve(static_cast<size_t>(scan_span_ms / (round_to * 1e-6) + 64));
 
@@ -362,33 +441,11 @@ bool Deskewer::deskewCloudImu(
         const int64_t binned = t_point / round_to;
         auto [it_cache, inserted] = rotCache.try_emplace(binned, Eigen::Matrix4f::Identity());
         if (!inserted) continue;
-
-        // Duration from this point to scan end (positive: point is older).
-        const double dt_s = (scan_end_ns - t_point) * 1e-9;
-
-        // Find the closest IMU sample by binary search on the sorted buffer.
-        // imu_buf is sorted ascending by .first (timestamp_ns).
-        const auto cmp = [](const ImuSample& s, int64_t t){ return s.first < t; };
-        auto it = std::lower_bound(imu_buf.begin(), imu_buf.end(), t_point, cmp);
-        if (it == imu_buf.end())          { --it; }   // past-the-end → use last
-        else if (it != imu_buf.begin())
-        {
-            auto prev = std::prev(it);
-            if (std::abs(prev->first - t_point) <= std::abs(it->first - t_point))
-                it = prev;
-        }
-        const Eigen::Vector3d omega_imu    = it->second;
-        const Eigen::Vector3d omega_sensor = R_sensor_imu * omega_imu;
-        const double omega_norm            = omega_sensor.norm();
-
-        if (omega_norm > 1e-8 && dt_s > 1e-9)
-        {
-            const double angle = omega_norm * dt_s;  // > 0
-            // Un-rotate the point backward by the angular motion between t_point
-            // and scan_end, expressing it in sensor@scan_end.
-            const Eigen::AngleAxisd aa(-angle, omega_sensor / omega_norm);
-            it_cache->second.block<3, 3>(0, 0) = aa.toRotationMatrix().cast<float>();
-        }
+        it_cache->second.block<3, 3>(0, 0) = rotationToScanEnd(t_point).cast<float>();
+        // Constant-velocity translation: p_end = A(t)·p_t + v_se·(t − t_end).
+        const double dt_signed_s = (t_point - scan_end_ns) * 1e-9;  // ≤ 0
+        it_cache->second.block<3, 1>(0, 3) =
+            (v_sensor_end * dt_signed_s).cast<float>();
     }
 
     // ── Apply correction in parallel ──

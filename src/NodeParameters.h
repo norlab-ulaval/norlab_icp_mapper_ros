@@ -52,6 +52,8 @@ public:
     bool publishTfsBetweenRegistrations;
     bool localizing;
     bool inputQosReliable;
+    bool anchorMapAtInitialRobotPose;
+    bool preserveRobotPoseOnMapLoad; ///< Keep the current map-frame pose across a hot map reload when localization is already established.
 
     // ── Deskew ────────────────────────────────────────────────────────────────
     bool deskew;
@@ -72,6 +74,7 @@ public:
     double compressionVoxelSize;  ///< Octree voxel size for published map. 0=disabled. Default: 0.5
 
     // ── Map publication crop ──────────────────────────────────────────────────
+    std::string mapPublicationSource; ///< auto|local|global. Select source for /map publication. Default: auto
     double mapPublishRadiusM;  ///< Crop published cloud to this XY radius around robot. 0=full map. Default: 0.0
 
     // ── Quality gate ──────────────────────────────────────────────────────────
@@ -81,6 +84,7 @@ public:
     double maxVelocityMs;              ///< Max robot velocity in m/s. Default: 20.0
     double maxYawRateDegS;             ///< Max yaw rate in deg/s. Default: 90.0
     double maxPoseYawStepDeg;          ///< Max absolute yaw step per accepted scan regardless of dt. Default: 30.0
+    double maxPoseYawOdomResidualDeg;  ///< Max ICP-vs-odom yaw disagreement for large real turns. Default: 12.0
     double maxPoseStepM;               ///< Max published XY step between accepted scans. Default: 2.0
     double maxZJumpM;                  ///< Max published robot Z jump between accepted scans. Default: 0.75
     double maxRegistrationTimeMs;      ///< Max tolerated ICP wall time in ms. Default: 5000.0
@@ -101,6 +105,45 @@ public:
     double minMapOverlapLooseRatio;         ///< Skip map insertion when aligned-scan loose overlap is below this. Default: 0.50
     double maxMapUpdateTranslationCorrectionM; ///< Skip map insertion when ICP translation correction exceeds this. Default: 1.50
     double maxMapUpdateRotationCorrectionDeg;  ///< Skip map insertion when ICP rotation correction exceeds this. Default: 12.0
+    bool enableMapRecovery;                    ///< Reload/rebuild local ICP map after rejection cascades. Default: true
+    int recoveryReloadAfterRejections;         ///< Consecutive rejects before local-map recovery. Default: 4
+    int recoveryAttemptIntervalScans;          ///< Retry recovery every N rejected scans after threshold. Default: 5
+    double recoveryLocalMapRadiusM;            ///< Radius used to crop global output map during recovery. Default: 45.0
+    int recoveryLocalMapMinPoints;             ///< Minimum cropped points required to use global recovery. Default: 5000
+    int recoveryLocalMapMaxPoints;             ///< Maximum points allowed in a recovered local ICP map. Default: 60000
+    int snapshotSaveIntervalScans;             ///< Accepted-scan spacing between last-good map snapshots. Default: 20
+    double snapshotMaxTranslationCorrectionM;  ///< Save snapshot only below this correction. Default: 1.0
+    double snapshotMaxRotationCorrectionDeg;   ///< Save snapshot only below this correction. Default: 5.0
+    bool enableMotionAdaptiveGate;             ///< Adapt gate to odom/IMU motion intensity. Default: true
+    double adaptiveMaxDtS;                     ///< Clamp dt used by adaptive gate. Default: 2.0
+    double adaptiveVelocityGain;               ///< Extra translation allowance from odom speed. Default: 1.25
+    double adaptiveAccelerationGain;           ///< Extra translation allowance from odom acceleration. Default: 0.50
+    double adaptiveYawRateGain;                ///< Extra yaw allowance from odom/IMU yaw rate. Default: 1.25
+    double aggressiveSpeedMs;                  ///< Motion is aggressive above this odom speed. Default: 2.0
+    double aggressiveYawRateDegS;              ///< Motion is aggressive above this yaw rate. Default: 35.0
+    double pivotLinearSpeedMs;                 ///< Pivot mode max linear speed. Default: 0.75
+    double pivotYawRateDegS;                   ///< Pivot mode min yaw rate. Default: 35.0
+    double pivotMaxTranslationCorrectionM;     ///< Pivot mode translation correction cap. Default: 1.25
+    bool enableOdomBridge;                     ///< Publish odom-prior pose during short ICP dropout without map insertion. Default: true
+    int odomBridgeAfterRejections;             ///< Enable odom bridge after this many consecutive rejects. Default: 0
+    double odomBridgeMinSpeedMs;               ///< Enable odom bridge above this odom speed. Default: 1.5
+    bool allowOdomBridgeMapInsertion;          ///< Allow dead-reckoning odom-bridge scans into the map. Default: false
+    bool enablePlanarPoseConstraint;           ///< Project accepted pose to x/y/yaw/z0. Default: false
+    double planarPoseMaxZDriftM;               ///< Max z drift before hard rejection when planar constraint is off. Default: 2.0
+
+    // ── Dynamic trailer self-filter ──────────────────────────────────────────
+    bool enableDynamicTrailerSelfFilter;        ///< Remove an articulated trailer OBB before ICP. Default: true
+    std::string dynamicTrailerArticulationTopic;///< Float64 articulation topic. Default: "/mtt_articulation_angle"
+    double dynamicTrailerStaleTimeoutS;         ///< Skip dynamic filter when articulation is older than this. Default: 0.5
+    double dynamicTrailerYawOffsetRad;          ///< Trailer rear-axis yaw at zero articulation. Default: pi
+    double dynamicTrailerYawSign;               ///< Sign applied to articulation angle. Default: -1
+    double dynamicTrailerHitchX;                ///< Hitch x in filtering_frame/base_link. Default: -1.45
+    double dynamicTrailerHitchY;                ///< Hitch y in filtering_frame/base_link. Default: -0.085
+    double dynamicTrailerFrontOffsetM;          ///< OBB start from hitch along trailer rear axis. Default: -0.15
+    double dynamicTrailerRearOffsetM;           ///< OBB end from hitch along trailer rear axis. Default: 2.20
+    double dynamicTrailerHalfWidthM;            ///< OBB half width incl. margins/operator. Default: 1.20
+    double dynamicTrailerZMinM;                 ///< OBB z min. Default: -0.35
+    double dynamicTrailerZMaxM;                 ///< OBB z max. Default: 2.50
 
     explicit NodeParameters(rclcpp::Node& node);
 };

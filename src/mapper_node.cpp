@@ -12,6 +12,8 @@
 #include <std_srvs/srv/empty.hpp>
 #include <memory>
 #include <mutex>
+#include <condition_variable>
+#include <optional>
 #include <thread>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <pointmatcher/PointMatcher.h>
@@ -44,17 +46,18 @@ public:
             hasToSetRobotPose = false;
         }
 
-        int messageQueueSize;
+        rclcpp::QoS subQos = rclcpp::QoS(0);
         if(params->isOnline)
         {
             tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(this->get_clock()));
-            messageQueueSize = 1;
+            // Best-effort, keep only the latest scan: never let a slow ICP registration back up the queue.
+            subQos = rclcpp::QoS(rclcpp::SensorDataQoS()).keep_last(1);
+            icpProcessingThread = std::thread(&MapperNode::icpProcessingLoop, this);
         }
         else
         {
             mapperShutdownThread = std::thread(&MapperNode::mapperShutdownLoop, this);
             tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(this->get_clock(), std::chrono::seconds(1000000)));
-            messageQueueSize = 0;
         }
 
         tfListener = std::unique_ptr<tf2_ros::TransformListener>(new tf2_ros::TransformListener(*tfBuffer));
@@ -69,7 +72,7 @@ public:
         {
             robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(3));
             odomToMap = PM::Matrix::Identity(4, 4);
-            pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", messageQueueSize,
+            pointCloud2Subscription = this->create_subscription<sensor_msgs::msg::PointCloud2>("points_in", subQos,
                                                                                                std::bind(&MapperNode::pointCloud2Callback, this,
                                                                                                          std::placeholders::_1));
         }
@@ -77,12 +80,12 @@ public:
         {
             robotTrajectory = std::unique_ptr<Trajectory>(new Trajectory(2));
             odomToMap = PM::Matrix::Identity(3, 3);
-            laserScanSubscription = this->create_subscription<sensor_msgs::msg::LaserScan>("points_in", messageQueueSize,
+            laserScanSubscription = this->create_subscription<sensor_msgs::msg::LaserScan>("points_in", subQos,
                                                                                                std::bind(&MapperNode::laserScanCallback, this,
                                                                                                          std::placeholders::_1));
         }
 
-        relocalizePoseSubscription = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("pose_in", messageQueueSize,
+        relocalizePoseSubscription = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("pose_in", subQos,
                                                                                                std::bind(&MapperNode::relocalizePoseCallback, this,
                                                                                                          std::placeholders::_1));
 
@@ -189,6 +192,17 @@ private:
     std::mutex isLocalizingLock;
 
     std::unique_ptr<Deskewer> deskewer;
+
+    struct PendingInput
+    {
+        PM::DataPoints dataPoints;
+        std::string sensorFrame;
+        rclcpp::Time stamp;
+    };
+    std::optional<PendingInput> pendingInput;
+    std::mutex pendingInputLock;
+    std::condition_variable pendingInputCondition;
+    std::thread icpProcessingThread;
 
     std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
     {
@@ -371,7 +385,14 @@ private:
             auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn);
             std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
             RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
-            gotInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+            if(params->isOnline)
+            {
+                queueInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+            }
+            else
+            {
+                gotInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);
+            }
         }
         isLocalizingLock.unlock();
     }
@@ -386,9 +407,42 @@ private:
             auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(scanMsgIn);
             std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
             RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
-            gotInput(input, scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+            if(params->isOnline)
+            {
+                queueInput(input, scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+            }
+            else
+            {
+                gotInput(input, scanMsgIn.header.frame_id, scanMsgIn.header.stamp);
+            }
         }
         isLocalizingLock.unlock();
+    }
+
+    void queueInput(PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& stamp)
+    {
+        pendingInputLock.lock();
+        pendingInput = PendingInput{input, sensorFrame, stamp};
+        pendingInputLock.unlock();
+        pendingInputCondition.notify_one();
+    }
+
+    void icpProcessingLoop()
+    {
+        while(rclcpp::ok())
+        {
+            std::unique_lock<std::mutex> lock(pendingInputLock);
+            pendingInputCondition.wait(lock, [this]{ return pendingInput.has_value() || !rclcpp::ok(); });
+            if(!rclcpp::ok())
+            {
+                break;
+            }
+            PendingInput current = std::move(*pendingInput);
+            pendingInput.reset();
+            lock.unlock();
+
+            gotInput(current.dataPoints, current.sensorFrame, current.stamp);
+        }
     }
 
     void publishAfterInputFilters(const PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& timeStamp)

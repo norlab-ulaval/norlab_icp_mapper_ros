@@ -55,7 +55,8 @@ public:
             hasToSetRobotPose = false;
         }
 
-        rclcpp::QoS subQos = rclcpp::QoS(0);
+        // Reliable with a queue of one by default for offline use
+        rclcpp::QoS subQos = rclcpp::QoS(1);
         if(params->isOnline)
         {
             tfBuffer = std::unique_ptr<tf2_ros::Buffer>(new tf2_ros::Buffer(this->get_clock()));
@@ -280,13 +281,22 @@ private:
 
     PM::TransformationParameters findTransform(const std::string& sourceFrame, const std::string& targetFrame, const rclcpp::Time& time, const int& transformDimension)
     {
+        double requestAheadOfNowMs = (time - this->get_clock()->now()).seconds() * 1000.0;
+        RCLCPP_DEBUG_STREAM(this->get_logger(), "Requesting transform " << sourceFrame << " -> " << targetFrame << " at a time "
+                                                                          << requestAheadOfNowMs << " [ms] ahead of now");
+        std::chrono::steady_clock::time_point lookupStartTime = std::chrono::steady_clock::now();
         geometry_msgs::msg::TransformStamped tf = tfBuffer->lookupTransform(targetFrame, sourceFrame, time, std::chrono::milliseconds(100));
+        std::chrono::steady_clock::time_point lookupEndTime = std::chrono::steady_clock::now();
+        RCLCPP_DEBUG_STREAM(this->get_logger(), "Looked up transform " << sourceFrame << " -> " << targetFrame << " in "
+                                                                         << std::chrono::duration_cast<std::chrono::milliseconds>(lookupEndTime - lookupStartTime).count() << " [ms]");
         return PointMatcher_ROS::rosTfToPointMatcherTransformation<float>(tf, transformDimension);
     }
 
     void gotInput(PM::DataPoints& input, const std::string& sensorFrame, const rclcpp::Time& cloudStamp)
     {
+        RCLCPP_DEBUG(this->get_logger(), "----Processing start----");
         rclcpp::Time timeStamp = cloudStamp;
+        RCLCPP_DEBUG_STREAM(this->get_logger(), "Incoming cloudStamp is " << (cloudStamp - this->get_clock()->now()).seconds() * 1000.0 << " [ms] ahead of now");
         std::chrono::steady_clock::time_point processingStartTime = std::chrono::steady_clock::now();
         try
         {
@@ -302,11 +312,16 @@ private:
                 // if deskewing was successful, update the cloud timestamp to match the last point in the cloud
                 if (deskewSuccessuful)
                 {
+                    std::chrono::steady_clock::time_point publishAfterDeskewStartTime = std::chrono::steady_clock::now();
                     publishAfterDeskew(input, sensorFrame, cloudStamp);
+                    std::chrono::steady_clock::time_point publishAfterDeskewEndTime = std::chrono::steady_clock::now();
+                    RCLCPP_DEBUG_STREAM(this->get_logger(), "Published deskewed cloud in "
+                                                                  << std::chrono::duration_cast<std::chrono::milliseconds>(publishAfterDeskewEndTime - publishAfterDeskewStartTime).count() << " [ms]");
                     timeStamp = rclcpp::Time(input.times(input.getNbPoints() - 1), timeStamp.get_clock_type());
+                    RCLCPP_DEBUG_STREAM(this->get_logger(), "After deskew, timeStamp shifted by " << (timeStamp - cloudStamp).seconds() * 1000.0
+                                                                                                    << " [ms] from cloudStamp, now " << (timeStamp - this->get_clock()->now()).seconds() * 1000.0 << " [ms] ahead of now");
                 }
             }
-
 
             PM::TransformationParameters sensorToOdom = findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim());
             PM::TransformationParameters sensorToMapBeforeUpdate = odomToMap * sensorToOdom;
@@ -341,7 +356,10 @@ private:
             const PM::TransformationParameters& sensorToMapAfterUpdate = mapper->getPose();
 
             PM::TransformationParameters currentOdomToMap = transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
+            std::chrono::steady_clock::time_point mapTfLockWaitStartTime = std::chrono::steady_clock::now();
             mapTfLock.lock();
+            std::chrono::steady_clock::time_point mapTfLockAcquiredTime = std::chrono::steady_clock::now();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Waited " << std::chrono::duration_cast<std::chrono::milliseconds>(mapTfLockAcquiredTime - mapTfLockWaitStartTime).count() << " [ms] to acquire mapTfLock");
             odomToMap = currentOdomToMap;
             mapTfLock.unlock();
 
@@ -376,7 +394,10 @@ private:
                 tfBroadcaster->sendTransform(currentOdomToMapTf);
             }
 
+            std::chrono::steady_clock::time_point idleTimeLockWaitStartTime = std::chrono::steady_clock::now();
             idleTimeLock.lock();
+            std::chrono::steady_clock::time_point idleTimeLockAcquiredTime = std::chrono::steady_clock::now();
+            RCLCPP_DEBUG_STREAM(this->get_logger(), "Waited " << std::chrono::duration_cast<std::chrono::milliseconds>(idleTimeLockAcquiredTime - idleTimeLockWaitStartTime).count() << " [ms] to acquire idleTimeLock");
             lastTimeInputWasProcessed = std::chrono::steady_clock::now();
             idleTimeLock.unlock();
         }
@@ -392,14 +413,14 @@ private:
 
     void pointCloud2Callback(const sensor_msgs::msg::PointCloud2& cloudMsgIn)
     {
-        RCLCPP_DEBUG(this->get_logger(), "----POINT CLOUD RECEIVED----");
+        // RCLCPP_DEBUG(this->get_logger(), "----POINT CLOUD RECEIVED----");
         isLocalizingLock.lock();
         if(isLocalizing)
         {
             std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
             auto input = PointMatcher_ROS::rosMsgToPointMatcherCloud<float>(cloudMsgIn);
             std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-            RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
+            // RCLCPP_DEBUG_STREAM(this->get_logger(), "Input converted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " [ms]");
             if(params->isOnline)
             {
                 queueInput(input, cloudMsgIn.header.frame_id, cloudMsgIn.header.stamp);

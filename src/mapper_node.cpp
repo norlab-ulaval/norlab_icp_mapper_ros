@@ -1,4 +1,6 @@
+#include "IDeskewer.h"
 #include "Deskewer.h"
+#include "ConstantVelocityDeskewer.h"
 #include "NodeParameters.h"
 #include <chrono>
 #include <cstdint>
@@ -31,7 +33,14 @@ public:
         mapper = std::make_unique<norlab_icp_mapper::Mapper>(params->mappingConfig, params->is3D, params->isOnline,
                                                params->isMapping, params->saveMapCellsOnHardDrive);
 
-        deskewer = std::make_unique<Deskewer>(this->get_logger(), this->get_clock(), params->expectedUniqueDeskewingTFNumber, params->deskewingRoundToNanoSecs);
+        if(params->deskewingMethod == "constant_velocity")
+        {
+            deskewer = std::make_unique<ConstantVelocityDeskewer>(this->get_logger());
+        }
+        else
+        {
+            deskewer = std::make_unique<Deskewer>(this->get_logger(), this->get_clock(), params->expectedUniqueDeskewingTFNumber, params->deskewingRoundToNanoSecs);
+        }
 
         if(!params->initialMapFileName.empty())
         {
@@ -172,6 +181,7 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr relocalizePoseSubscription;
     PM::TransformationParameters previousRobotToMap;
+    PM::TransformationParameters previousSensorToMapForDeskewing;
     rclcpp::Time previousTimeStamp;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reloadYamlConfigService;
     rclcpp::Service<norlab_icp_mapper_ros::srv::SaveMap>::SharedPtr saveMapService;
@@ -191,7 +201,7 @@ private:
     bool isLocalizing;
     std::mutex isLocalizingLock;
 
-    std::unique_ptr<Deskewer> deskewer;
+    std::unique_ptr<IDeskewer> deskewer;
 
     struct PendingInput
     {
@@ -349,9 +359,14 @@ private:
                 odomMsgOut.twist.twist.linear.x = linearVelocity(0);
                 odomMsgOut.twist.twist.linear.y = linearVelocity(1);
                 odomMsgOut.twist.twist.linear.z = linearVelocity(2);
+
+                double deltaTimeSeconds = (timeStamp - previousTimeStamp).seconds();
+                PM::TransformationParameters relativeTransform = sensorToMapAfterUpdate.inverse() * previousSensorToMapForDeskewing;
+                deskewer->updateMotion(relativeTransform, deltaTimeSeconds);
             }
             previousTimeStamp = timeStamp;
             previousRobotToMap = robotToMap;
+            previousSensorToMapForDeskewing = sensorToMapAfterUpdate;
 
             odomPublisher->publish(odomMsgOut);
 

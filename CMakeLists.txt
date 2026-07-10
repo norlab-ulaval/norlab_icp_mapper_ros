@@ -17,6 +17,7 @@ find_package(libpointmatcher_ros 2.0.1 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(libpointmatcher CONFIG 1.4.3 REQUIRED)
+find_package(Sophus REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/SaveTrajectory.srv"
@@ -34,6 +35,7 @@ add_executable(mapper_node
     src/mapper_node.cpp
     src/NodeParameters.cpp
     src/Deskewer.cpp
+    src/ConstantVelocityDeskewer.cpp
 )
 
 ament_target_dependencies(mapper_node
@@ -54,6 +56,7 @@ target_link_libraries(mapper_node
     ${norlab_icp_mapper_LIBRARIES}
     ${libpointmatcher_LIBRARIES}
     OpenMP::OpenMP_CXX
+    Sophus::Sophus
 )
 
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")

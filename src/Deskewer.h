@@ -1,6 +1,7 @@
 #ifndef DESKEWER_H
 #define DESKEWER_H
 
+#include "IDeskewer.h"
 #include <pointmatcher/PointMatcher.h>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
@@ -8,7 +9,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
-class Deskewer
+class Deskewer : public IDeskewer
 {
   private:
     typedef PointMatcher<float> PM;
@@ -30,7 +31,7 @@ class Deskewer
     // Constructor
     Deskewer(const rclcpp::Logger &logger, rclcpp::Clock::SharedPtr clock, uint expectedUniqueDeskewingTFNumber, uint deskewingRoundToNanoSecs);
 
-    bool deskewCloud(DP &cloud, const std::string &sensor_frame);
+    bool deskewCloud(DP &cloud, const std::string &sensor_frame) override;
 };
 
 #endif

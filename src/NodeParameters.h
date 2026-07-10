@@ -33,6 +33,7 @@ public:
 	bool saveMapCellsOnHardDrive;
 	bool publishTfsBetweenRegistrations;
 	bool deskew;
+	std::string deskewingMethod;
 	int expectedUniqueDeskewingTFNumber;
 	int deskewingRoundToNanoSecs;
 	bool localizing;

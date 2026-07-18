@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <unordered_set>
@@ -29,6 +30,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <tf2_ros/transform_broadcaster.h>
+#include <std_msgs/msg/float64.hpp>
 #include <std_srvs/srv/empty.hpp>
 
 // ── Frame convention ──
@@ -47,12 +49,16 @@ public:
 
         mapper = std::make_unique<norlab_icp_mapper::Mapper>(params->mappingConfig, params->is3D, params->isOnline,
                                                params->isMapping, params->saveMapCellsOnHardDrive);
+        mappingEnabled_.store(params->isMapping);
 
         RCLCPP_INFO(this->get_logger(),
-            "Map management: cell_storage=%s trimming=%s — %s",
+            "Map management: cell_storage=%s trimming=%s global_output=%s — %s",
             params->saveMapCellsOnHardDrive ? "disk(/tmp/*.vtk)" : "RAM",
             params->enableMapTrimming ? "ON" : "OFF",
-            params->saveMapCellsOnHardDrive && !params->enableMapTrimming
+            params->enableGlobalOutputMap ? "ON" : "OFF",
+            params->enableGlobalOutputMap && params->enableMapTrimming
+                ? "local ICP map capped; global output map preserved for revisits/export"
+                : params->saveMapCellsOnHardDrive && !params->enableMapTrimming
                 ? "large-area mode (bounded local ICP map, global history preserved)"
                 : params->enableMapTrimming
                     ? "short-range mode (map capped at trim radius, global history LOST)"
@@ -115,6 +121,11 @@ public:
                         msg->angular_velocity.y,
                         msg->angular_velocity.z);
                     std::lock_guard<std::mutex> lk(imuDeskewBufMutex_);
+                    // Sim time jumped backward (bag loop/restart): drop the stale
+                    // future-time samples so the buffer stays time-sorted.
+                    if (!imuDeskewBuf_.empty() &&
+                        stamp_ns + 500'000'000LL < imuDeskewBuf_.back().first)
+                        imuDeskewBuf_.clear();
                     imuDeskewBuf_.emplace_back(stamp_ns, omega);
                     // Retain up to 5 s of gyro history — covers any scan gap during replay.
                     while (imuDeskewBuf_.size() > 1 &&
@@ -127,6 +138,30 @@ public:
                 params->deskewImuTopic.c_str());
         }
 
+        if (params->enableDynamicTrailerSelfFilter)
+        {
+            dynamicTrailerArticulationSubscription_ =
+                this->create_subscription<std_msgs::msg::Float64>(
+                    params->dynamicTrailerArticulationTopic,
+                    rclcpp::SensorDataQoS(),
+                    [this](const std_msgs::msg::Float64::SharedPtr msg)
+                    {
+                        std::lock_guard<std::mutex> lk(dynamicTrailerMutex_);
+                        latestDynamicTrailerAngleRad_ = msg->data;
+                        latestDynamicTrailerAngleTime_ = this->now();
+                        hasDynamicTrailerAngle_ = true;
+                    });
+            RCLCPP_INFO(this->get_logger(),
+                "[SELF-FILTER] Dynamic trailer OBB enabled: topic=%s hitch=(%.3f, %.3f) "
+                "s=[%.2f, %.2f] half_width=%.2f z=[%.2f, %.2f] yaw=%.3f %+g*phi",
+                params->dynamicTrailerArticulationTopic.c_str(),
+                params->dynamicTrailerHitchX, params->dynamicTrailerHitchY,
+                params->dynamicTrailerFrontOffsetM, params->dynamicTrailerRearOffsetM,
+                params->dynamicTrailerHalfWidthM,
+                params->dynamicTrailerZMinM, params->dynamicTrailerZMaxM,
+                params->dynamicTrailerYawOffsetRad, params->dynamicTrailerYawSign);
+        }
+
         mapPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "map", rclcpp::QoS(1).reliable().transient_local());
         inputFiltersScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("scan_after_input_filters", 1);
@@ -134,6 +169,11 @@ public:
         alignedScanPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "aligned_scan", rclcpp::QoS(1).reliable());
         odomPublisher = this->create_publisher<nav_msgs::msg::Odometry>("icp_odom", 50);
+        // Pure ICP corrections only. Unlike icp_odom, this topic never contains
+        // odom-bridge poses and can therefore be used as an estimator correction
+        // measurement without confusing dead reckoning for scan matching.
+        icpMeasurementPublisher =
+            this->create_publisher<nav_msgs::msg::Odometry>("icp_measurement", 50);
         statusPublisher = this->create_publisher<diagnostic_msgs::msg::DiagnosticStatus>("status", 50);
         trajectoryPathPublisher = this->create_publisher<nav_msgs::msg::Path>(
             "trajectory_path", rclcpp::QoS(1).reliable().transient_local());
@@ -215,6 +255,7 @@ public:
         isLocalizing_.store(params->localizing);
         if (!isLocalizing_.load())
         {
+            mappingEnabled_.store(false);
             mapper->setIsMapping(false);
         }
         if (mapper->getIsMapping())
@@ -231,6 +272,62 @@ public:
         qgConfig.max_yaw_rate_deg_s       = params->maxYawRateDegS;
         qgConfig.max_registration_time_ms = params->maxRegistrationTimeMs;
         qualityGate_.setConfig(qgConfig);
+
+        RCLCPP_INFO(this->get_logger(),
+            "Mapper effective params: frames map=%s odom=%s robot=%s filtering=%s "
+            "config=%s deskew=%s source=%s is_online=%s cell_storage=%s trimming=%s "
+            "anchor_initial_robot=%s pose_gate=%.2fm/%.1fdeg pose_step=%.1fm/%.1fdeg map_update_gate=%.2fm/%.1fdeg "
+            "overlap_pose=%.2f/%.2f overlap_map=%.2f/%.2f",
+            params->mapFrame.c_str(),
+            params->odomFrame.c_str(),
+            params->robotFrame.c_str(),
+            params->filteringFrame.c_str(),
+            params->mappingConfig.c_str(),
+            params->deskew ? "true" : "false",
+            params->deskewSource.c_str(),
+            params->isOnline ? "true" : "false",
+            params->saveMapCellsOnHardDrive ? "true" : "false",
+            params->enableMapTrimming ? "true" : "false",
+            params->anchorMapAtInitialRobotPose ? "true" : "false",
+            params->maxTranslationCorrection,
+            params->maxRotationCorrectionDeg,
+            params->maxPoseStepM,
+            params->maxPoseYawStepDeg,
+            params->maxMapUpdateTranslationCorrectionM,
+            params->maxMapUpdateRotationCorrectionDeg,
+            params->minPoseOverlapNearRatio,
+            params->minPoseOverlapLooseRatio,
+            params->minMapOverlapNearRatio,
+            params->minMapOverlapLooseRatio);
+        RCLCPP_INFO(this->get_logger(),
+            "Recovery/adaptive params: map_recovery=%s after=%d interval=%d radius=%.1fm pts=%d..%d "
+            "snapshot_every=%d snapshot_gate=%.2fm/%.1fdeg adaptive_gate=%s gains(v/a/yaw)=%.2f/%.2f/%.2f "
+            "aggressive(speed/yaw)=%.2fmps/%.1fdps pivot(speed/yaw/tr)=%.2fmps/%.1fdps/%.2fm "
+            "odom_bridge=%s after=%d min_speed=%.2fmps map_insert=%s planar=%s z_drift=%.2fm",
+            params->enableMapRecovery ? "true" : "false",
+            params->recoveryReloadAfterRejections,
+            params->recoveryAttemptIntervalScans,
+            params->recoveryLocalMapRadiusM,
+            params->recoveryLocalMapMinPoints,
+            params->recoveryLocalMapMaxPoints,
+            params->snapshotSaveIntervalScans,
+            params->snapshotMaxTranslationCorrectionM,
+            params->snapshotMaxRotationCorrectionDeg,
+            params->enableMotionAdaptiveGate ? "true" : "false",
+            params->adaptiveVelocityGain,
+            params->adaptiveAccelerationGain,
+            params->adaptiveYawRateGain,
+            params->aggressiveSpeedMs,
+            params->aggressiveYawRateDegS,
+            params->pivotLinearSpeedMs,
+            params->pivotYawRateDegS,
+            params->pivotMaxTranslationCorrectionM,
+            params->enableOdomBridge ? "true" : "false",
+            params->odomBridgeAfterRejections,
+            params->odomBridgeMinSpeedMs,
+            params->allowOdomBridgeMapInsertion ? "true" : "false",
+            params->enablePlanarPoseConstraint ? "true" : "false",
+            params->planarPoseMaxZDriftM);
 
         // Register parameter update callback.
         paramCallbackHandle = this->get_node_parameters_interface()->add_on_set_parameters_callback(
@@ -316,12 +413,14 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr deskewingScanPublisher;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr alignedScanPublisher;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPublisher;
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr icpMeasurementPublisher;
     rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticStatus>::SharedPtr statusPublisher;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr trajectoryPathPublisher;
     rclcpp::TimerBase::SharedPtr trajectoryPathTimer_;
     rclcpp::TimerBase::SharedPtr diagnosticsTimer_;
     nav_msgs::msg::Path trajectoryPath_;   ///< Accumulated path, published at each accepted scan.
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointCloud2Subscription;
+    rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr dynamicTrailerArticulationSubscription_;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laserScanSubscription;
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr relocalizePoseSubscription;
     PM::TransformationParameters previousRobotToMap;
@@ -351,6 +450,20 @@ private:
     uint64_t globalOutputMapUpdates_{0};
     PM::TransformationParameters lastDeterministicMapUpdatePose_;
     bool hasDeterministicMapUpdatePose_{false};
+    struct LastGoodMapSnapshot
+    {
+        PM::DataPoints map;
+        PM::TransformationParameters sensorToMap;
+        PM::TransformationParameters robotToMap;
+        rclcpp::Time stamp;
+        uint64_t acceptedScan{0};
+        bool valid{false};
+    };
+    LastGoodMapSnapshot lastGoodMapSnapshot_;
+    int lastRecoveryAttemptRejections_{-1};
+    double lastOdomPriorSpeedMs_{0.0};
+    bool hasLastOdomPriorSpeed_{false};
+    bool forceNextMapUpdate_{false};
     // Node-side deterministic insertion avoids the unsafe second ICP pass that
     // was contaminating the map. Spacing is parameterized because replay and
     // low-speed articulated motion need updates before leaving the first scan.
@@ -383,6 +496,26 @@ private:
     // the map freezes and every following scan is rejected.
     static constexpr int minMapOverlapSamples_ = 200;
 
+    struct MotionState
+    {
+        double dtAcceptedS{0.0};
+        double odomSpeedMs{0.0};
+        double odomAccelMs2{0.0};
+        double odomYawRateDegS{0.0};
+        double imuYawRateDegS{0.0};
+        double dominantYawRateDegS{0.0};
+        bool aggressive{false};
+        bool pivot{false};
+    };
+
+    struct AdaptiveGateLimits
+    {
+        double translationM{0.0};
+        double rotationDeg{0.0};
+        bool adaptive{false};
+        bool pivot{false};
+    };
+
     // ── Safe map publication buffer ──
     // Instead of calling mapper->getNewLocalMap() from the publisher thread
     // (which may swap Map's internal double-buffer and leave isLocalPointCloudEmpty()=true,
@@ -399,6 +532,10 @@ private:
 
     // Atomic — no mutex needed for simple bool flag.
     std::atomic<bool> isLocalizing_{true};
+    // Authoritative requested mapping state. The mapper itself is temporarily
+    // switched off during every scan's localization phase, so getIsMapping()
+    // cannot represent the operator/service request.
+    std::atomic<bool> mappingEnabled_{true};
     // Shutdown flag for background threads.
     std::atomic<bool> running_{true};
     // Scan acceptance statistics.
@@ -407,9 +544,14 @@ private:
     std::atomic<uint64_t> pointCloudCallbacksStarted_{0};
     std::atomic<uint64_t> pointCloudCallbacksCompleted_{0};
     std::atomic<int64_t> lastPointCloudStampNs_{0};
+    std::atomic<uint64_t> mapVersion_{1};
     // Consecutive rejection counter — reset to 0 on each accepted scan.
     // Updated only from the gotInput thread (serialized), so no atomic needed.
     int consecutiveRejections_{0};
+    // Odom-bridge scans are accepted for odometry/path but frozen for map insertion.
+    // They therefore reset consecutiveRejections_, so recovery needs its own counter.
+    int consecutiveOdomBridgeScans_{0};
+    int lastOdomBridgeRecoveryAttempt_{-1};
     // Protects outputMapSubsamplingFilter during runtime param update.
     std::mutex mapFilterMutex_;
     // Protects robotTrajectory access across gotInput and mapperShutdownLoop threads.
@@ -427,6 +569,7 @@ private:
     PM::TransformationParameters lastAcceptedRobotToMap_;
     PM::TransformationParameters initialAcceptedRobotToMap_;
     bool hasInitialAcceptedRobotToMap_{false};
+    bool mapAnchoredAtInitialRobotPose_{false};
     bool hasSavedMap_{false};
     std::unique_ptr<Deskewer> deskewer;
 
@@ -438,6 +581,11 @@ private:
     // Static rotation: IMU frame → sensor/LiDAR frame.  Looked up once from TF_static.
     Eigen::Matrix3d R_sensor_imu_{Eigen::Matrix3d::Identity()};
     bool imuExtrinsicReady_{false};
+
+    std::mutex dynamicTrailerMutex_;
+    double latestDynamicTrailerAngleRad_{0.0};
+    rclcpp::Time latestDynamicTrailerAngleTime_{0, 0, RCL_ROS_TIME};
+    bool hasDynamicTrailerAngle_{false};
 
     static double yawFromTransform(const PM::TransformationParameters& transform)
     {
@@ -466,6 +614,86 @@ private:
         return ss.str();
     }
 
+    bool getFreshDynamicTrailerAngle(const rclcpp::Time& scanStamp, double& angleRad, double& ageS)
+    {
+        if (!params->enableDynamicTrailerSelfFilter) return false;
+        std::lock_guard<std::mutex> lk(dynamicTrailerMutex_);
+        if (!hasDynamicTrailerAngle_) return false;
+        angleRad = latestDynamicTrailerAngleRad_;
+        ageS = std::abs((scanStamp - latestDynamicTrailerAngleTime_).seconds());
+        return ageS <= params->dynamicTrailerStaleTimeoutS;
+    }
+
+    int removeDynamicTrailerPoints(PM::DataPoints& cloud, const rclcpp::Time& scanStamp)
+    {
+        if (!params->enableDynamicTrailerSelfFilter) return 0;
+
+        double phi = 0.0;
+        double ageS = 0.0;
+        if (!getFreshDynamicTrailerAngle(scanStamp, phi, ageS))
+        {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                "[SELF-FILTER] Dynamic trailer OBB skipped: no fresh articulation on %s "
+                "(timeout %.2fs). Static YAML bbox still applies.",
+                params->dynamicTrailerArticulationTopic.c_str(),
+                params->dynamicTrailerStaleTimeoutS);
+            return 0;
+        }
+
+        const int nbPoints = static_cast<int>(cloud.getNbPoints());
+        if (nbPoints <= 0 || cloud.getEuclideanDim() < 3) return 0;
+
+        const double yaw = params->dynamicTrailerYawOffsetRad + params->dynamicTrailerYawSign * phi;
+        const double ux = std::cos(yaw);
+        const double uy = std::sin(yaw);
+        const double lx = -uy;
+        const double ly = ux;
+        const double hx = params->dynamicTrailerHitchX;
+        const double hy = params->dynamicTrailerHitchY;
+        const double sMin = params->dynamicTrailerFrontOffsetM;
+        const double sMax = params->dynamicTrailerRearOffsetM;
+        const double halfWidth = params->dynamicTrailerHalfWidthM;
+        const double zMin = params->dynamicTrailerZMinM;
+        const double zMax = params->dynamicTrailerZMaxM;
+
+        int writeCol = 0;
+        int removed = 0;
+        for (int readCol = 0; readCol < nbPoints; ++readCol)
+        {
+            const double dx = static_cast<double>(cloud.features(0, readCol)) - hx;
+            const double dy = static_cast<double>(cloud.features(1, readCol)) - hy;
+            const double z = static_cast<double>(cloud.features(2, readCol));
+            const double s = dx * ux + dy * uy;
+            const double l = dx * lx + dy * ly;
+            const bool inside =
+                s >= sMin && s <= sMax &&
+                std::abs(l) <= halfWidth &&
+                z >= zMin && z <= zMax;
+
+            if (inside)
+            {
+                ++removed;
+            }
+            else
+            {
+                if (writeCol != readCol)
+                {
+                    cloud.setColFrom(writeCol, cloud, readCol);
+                }
+                ++writeCol;
+            }
+        }
+        cloud.conservativeResize(writeCol);
+
+        if (removed > 0)
+        {
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "[SELF-FILTER] dynamic trailer removed=%d/%d phi=%.3f rad age=%.3fs yaw=%.1f deg",
+                removed, nbPoints, phi, ageS, yaw * 180.0 / M_PI);
+        }
+        return removed;
+    }
+
     // Publish per-scan status to /mapping/status (diagnostic_msgs/DiagnosticStatus).
     // No-op when no subscribers — avoids allocation overhead on the ICP hot path.
     void publishScanStatus(
@@ -476,7 +704,8 @@ private:
         float translation_m,
         float rotation_deg,
         float reg_ms,
-        float dt_since_accepted_s)
+        float dt_since_accepted_s,
+        bool turn_recovery = false)
     {
         if (statusPublisher->get_subscription_count() == 0) return;
 
@@ -502,10 +731,12 @@ private:
         msg.values.push_back(kv("translation_m",         std::to_string(translation_m)));
         msg.values.push_back(kv("rotation_deg",          std::to_string(rotation_deg)));
         msg.values.push_back(kv("registration_ms",       std::to_string(reg_ms)));
+        msg.values.push_back(kv("turn_recovery",         turn_recovery ? "1" : "0"));
         msg.values.push_back(kv("consecutive_rejections",std::to_string(consecutiveRejections_)));
         msg.values.push_back(kv("dt_since_accepted_s",   std::to_string(dt_since_accepted_s)));
         msg.values.push_back(kv("scans_accepted",        std::to_string(scansAccepted_.load())));
         msg.values.push_back(kv("scans_rejected",        std::to_string(scansRejected_.load())));
+        msg.values.push_back(kv("map_points",            std::to_string(mapper->getMap().getNbPoints())));
 
         statusPublisher->publish(msg);
     }
@@ -548,6 +779,17 @@ private:
         double looseRatio{1.0};
     };
 
+    struct MapOverlapVoxelCache
+    {
+        uint64_t mapVersion{0};
+        int mapPoints{0};
+        std::unordered_set<VoxelKey, VoxelKeyHash> nearVoxels;
+        std::unordered_set<VoxelKey, VoxelKeyHash> looseVoxels;
+    };
+
+    mutable std::mutex overlapVoxelCacheMutex_;
+    mutable MapOverlapVoxelCache overlapVoxelCache_;
+
     static bool pointFinite(const PM::DataPoints& cloud, const int col)
     {
         const int dim = cloud.getEuclideanDim();
@@ -576,12 +818,15 @@ private:
 
     static std::unordered_set<VoxelKey, VoxelKeyHash> buildVoxelSet(
         const PM::DataPoints& cloud,
-        const double voxelSize)
+        const double voxelSize,
+        const int targetSamples = 80000)
     {
         std::unordered_set<VoxelKey, VoxelKeyHash> voxels;
         const int nbPoints = static_cast<int>(cloud.getNbPoints());
-        voxels.reserve(static_cast<std::size_t>(nbPoints) * 2U);
-        for (int col = 0; col < nbPoints; ++col)
+        const int stride = std::max(1, nbPoints / std::max(1, targetSamples));
+        const int reservePoints = (nbPoints + stride - 1) / stride;
+        voxels.reserve(static_cast<std::size_t>(reservePoints) * 2U);
+        for (int col = 0; col < nbPoints; col += stride)
         {
             if (pointFinite(cloud, col))
             {
@@ -611,6 +856,509 @@ private:
         return false;
     }
 
+    void setMapperMap(PM::DataPoints map)
+    {
+        mapper->setMap(map);
+        mapVersion_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    static PM::TransformationParameters yawOnlyRobotPose(
+        const PM::TransformationParameters& robotToMap,
+        const double z)
+    {
+        PM::TransformationParameters constrained =
+            PM::TransformationParameters::Identity(robotToMap.rows(), robotToMap.cols());
+        const int dim = static_cast<int>(robotToMap.rows()) - 1;
+        const double yaw = yawFromTransform(robotToMap);
+        constrained(0, 0) = static_cast<float>(std::cos(yaw));
+        constrained(0, 1) = static_cast<float>(-std::sin(yaw));
+        constrained(1, 0) = static_cast<float>(std::sin(yaw));
+        constrained(1, 1) = static_cast<float>(std::cos(yaw));
+        constrained(0, dim) = robotToMap(0, dim);
+        constrained(1, dim) = robotToMap(1, dim);
+        if (dim >= 3)
+        {
+            constrained(2, 2) = 1.0f;
+            constrained(2, dim) = static_cast<float>(z);
+        }
+        return constrained;
+    }
+
+    bool maybeConstrainPlanarPose(
+        PM::TransformationParameters& sensorToMap,
+        const PM::TransformationParameters& robotToSensor,
+        const PM::TransformationParameters& odomPredictedRobotToMap,
+        const char* context)
+    {
+        if (!params->is3D)
+        {
+            return true;
+        }
+
+        const int dim = static_cast<int>(sensorToMap.rows()) - 1;
+        PM::TransformationParameters robotToMap = sensorToMap * robotToSensor;
+        const double referenceZ = hasInitialAcceptedRobotToMap_
+            ? static_cast<double>(initialAcceptedRobotToMap_(2, dim))
+            : static_cast<double>(odomPredictedRobotToMap(2, dim));
+        const double zDrift = std::abs(static_cast<double>(robotToMap(2, dim)) - referenceZ);
+
+        if (!params->enablePlanarPoseConstraint)
+        {
+            if (hasInitialAcceptedRobotToMap_ && zDrift > params->planarPoseMaxZDriftM)
+            {
+                RCLCPP_WARN(this->get_logger(),
+                    "Rejecting non-planar pose in %s: z_drift=%.3fm > %.3fm pose={%s}",
+                    context,
+                    zDrift,
+                    params->planarPoseMaxZDriftM,
+                    transformSummary(robotToMap).c_str());
+                return false;
+            }
+            return true;
+        }
+
+        const double zBefore = static_cast<double>(robotToMap(2, dim));
+        PM::TransformationParameters constrainedRobotToMap =
+            yawOnlyRobotPose(robotToMap, referenceZ);
+        sensorToMap = constrainedRobotToMap * robotToSensor.inverse();
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+            "[PLANAR] %s constrained pose: z %.3f -> %.3f yaw=%.1fdeg",
+            context,
+            zBefore,
+            referenceZ,
+            yawFromTransform(constrainedRobotToMap) * 180.0 / M_PI);
+        return true;
+    }
+
+    double latestImuYawRateDegS(const rclcpp::Time& stamp)
+    {
+        if (params->deskewImuTopic.empty())
+        {
+            return 0.0;
+        }
+
+        std::lock_guard<std::mutex> lk(imuDeskewBufMutex_);
+        if (imuDeskewBuf_.empty())
+        {
+            return 0.0;
+        }
+
+        const int64_t target = stamp.nanoseconds();
+        double bestAbsRate = 0.0;
+        int64_t bestDt = std::numeric_limits<int64_t>::max();
+        for (const auto& sample : imuDeskewBuf_)
+        {
+            const int64_t dt = std::abs(sample.first - target);
+            if (dt < bestDt)
+            {
+                bestDt = dt;
+                bestAbsRate = std::abs(sample.second.z()) * 180.0 / M_PI;
+            }
+        }
+        // Ignore stale IMU when replay timing leaves a gap.
+        return bestDt <= 250'000'000LL ? bestAbsRate : 0.0;
+    }
+
+    MotionState estimateMotionState(
+        const PM::TransformationParameters& odomPredictedRobotToMap,
+        const rclcpp::Time& stamp,
+        const double dtSecAccepted)
+    {
+        MotionState motion;
+        motion.dtAcceptedS = dtSecAccepted;
+        if (!hasInitialAcceptedRobotToMap_ || dtSecAccepted <= 1e-6)
+        {
+            motion.imuYawRateDegS = latestImuYawRateDegS(stamp);
+            motion.dominantYawRateDegS = motion.imuYawRateDegS;
+            return motion;
+        }
+
+        const int dim = static_cast<int>(odomPredictedRobotToMap.rows()) - 1;
+        const Eigen::VectorXf odomDelta =
+            odomPredictedRobotToMap.topRightCorner(dim, 1) -
+            lastAcceptedRobotToMap_.topRightCorner(dim, 1);
+        const double xy = std::hypot(static_cast<double>(odomDelta(0)), static_cast<double>(odomDelta(1)));
+        const double dt = std::max(1e-4, std::min(dtSecAccepted, params->adaptiveMaxDtS));
+        motion.odomSpeedMs = xy / dt;
+        if (hasLastOdomPriorSpeed_)
+        {
+            motion.odomAccelMs2 =
+                std::abs(motion.odomSpeedMs - lastOdomPriorSpeedMs_) / dt;
+        }
+        const double yawStepDeg =
+            std::abs(wrapToPi(
+                yawFromTransform(odomPredictedRobotToMap) -
+                yawFromTransform(lastAcceptedRobotToMap_))) * 180.0 / M_PI;
+        motion.odomYawRateDegS = yawStepDeg / dt;
+        motion.imuYawRateDegS = latestImuYawRateDegS(stamp);
+        motion.dominantYawRateDegS = std::max(motion.odomYawRateDegS, motion.imuYawRateDegS);
+        motion.aggressive =
+            motion.odomSpeedMs >= params->aggressiveSpeedMs ||
+            motion.dominantYawRateDegS >= params->aggressiveYawRateDegS ||
+            motion.odomAccelMs2 >= params->aggressiveSpeedMs;
+        motion.pivot =
+            motion.odomSpeedMs <= params->pivotLinearSpeedMs &&
+            motion.dominantYawRateDegS >= params->pivotYawRateDegS;
+        return motion;
+    }
+
+    AdaptiveGateLimits adaptiveGateLimits(
+        const MotionState& motion,
+        const double dtSecAccepted) const
+    {
+        AdaptiveGateLimits limits;
+        const double dt = std::max(0.0, std::min(dtSecAccepted, params->adaptiveMaxDtS));
+        limits.translationM =
+            params->maxTranslationCorrection +
+            params->adaptiveVelocityGain * motion.odomSpeedMs * dt +
+            params->adaptiveAccelerationGain * motion.odomAccelMs2 * dt * dt;
+        limits.rotationDeg =
+            params->maxRotationCorrectionDeg +
+            params->adaptiveYawRateGain * motion.dominantYawRateDegS * dt;
+        limits.adaptive = params->enableMotionAdaptiveGate;
+        limits.pivot = motion.pivot;
+        if (motion.pivot)
+        {
+            limits.translationM =
+                std::min(limits.translationM, params->pivotMaxTranslationCorrectionM);
+            limits.rotationDeg =
+                std::max(limits.rotationDeg, params->maxRotationCorrectionDeg);
+        }
+        return limits;
+    }
+
+    bool adaptiveGateAccepts(
+        const RegistrationQualityGate::Result& qgResult,
+        const MotionState& motion,
+        const double dtSecAccepted,
+        std::string& reason) const
+    {
+        if (!params->enableMotionAdaptiveGate)
+        {
+            return false;
+        }
+        const bool rejectionIsFundamental =
+            qgResult.rejection_reason.find("few") != std::string::npos ||
+            qgResult.rejection_reason.find("NaN") != std::string::npos ||
+            qgResult.rejection_reason.find("Inf") != std::string::npos ||
+            qgResult.rejection_reason.find("too long") != std::string::npos;
+        if (rejectionIsFundamental)
+        {
+            return false;
+        }
+
+        const AdaptiveGateLimits limits = adaptiveGateLimits(motion, dtSecAccepted);
+        const bool withinTranslation =
+            qgResult.translation_correction_m <= limits.translationM;
+        const bool withinRotation =
+            qgResult.rotation_correction_deg <= limits.rotationDeg;
+        if (withinTranslation && withinRotation)
+        {
+            std::ostringstream ss;
+            ss << "adaptive gate accepted: correction="
+               << qgResult.translation_correction_m << "m/"
+               << qgResult.rotation_correction_deg << "deg within limits "
+               << limits.translationM << "m/" << limits.rotationDeg
+               << "deg motion speed=" << motion.odomSpeedMs
+               << "m/s accel=" << motion.odomAccelMs2
+               << "m/s2 yaw_rate=" << motion.dominantYawRateDegS
+               << "deg/s pivot=" << motion.pivot;
+            reason = ss.str();
+            return true;
+        }
+
+        std::ostringstream ss;
+        ss << "adaptive gate rejected: correction="
+           << qgResult.translation_correction_m << "m/"
+           << qgResult.rotation_correction_deg << "deg > limits "
+           << limits.translationM << "m/" << limits.rotationDeg
+           << "deg motion speed=" << motion.odomSpeedMs
+           << "m/s accel=" << motion.odomAccelMs2
+           << "m/s2 yaw_rate=" << motion.dominantYawRateDegS
+           << "deg/s pivot=" << motion.pivot;
+        reason = ss.str();
+        return false;
+    }
+
+    bool saveGoodMapSnapshot(
+        const PM::TransformationParameters& sensorToMap,
+        const PM::TransformationParameters& robotToMap,
+        const RegistrationQualityGate::Result& qgResult,
+        const rclcpp::Time& stamp,
+        const char* reason)
+    {
+        if (qgResult.translation_correction_m > params->snapshotMaxTranslationCorrectionM ||
+            qgResult.rotation_correction_deg > params->snapshotMaxRotationCorrectionDeg)
+        {
+            return false;
+        }
+        const uint64_t accepted = scansAccepted_.load();
+        if (lastGoodMapSnapshot_.valid &&
+            accepted - lastGoodMapSnapshot_.acceptedScan <
+                static_cast<uint64_t>(params->snapshotSaveIntervalScans))
+        {
+            return false;
+        }
+
+        PM::DataPoints snapshotMap = mapper->getMap();
+        if (snapshotMap.getNbPoints() == 0)
+        {
+            return false;
+        }
+
+        lastGoodMapSnapshot_.map = std::move(snapshotMap);
+        lastGoodMapSnapshot_.sensorToMap = sensorToMap;
+        lastGoodMapSnapshot_.robotToMap = robotToMap;
+        lastGoodMapSnapshot_.stamp = stamp;
+        lastGoodMapSnapshot_.acceptedScan = accepted;
+        lastGoodMapSnapshot_.valid = true;
+        RCLCPP_INFO(this->get_logger(),
+            "[SNAPSHOT] saved reason=%s scan=%lu map_pts=%d correction=%.3fm/%.1fdeg pose={%s}",
+            reason,
+            static_cast<unsigned long>(accepted),
+            static_cast<int>(lastGoodMapSnapshot_.map.getNbPoints()),
+            qgResult.translation_correction_m,
+            qgResult.rotation_correction_deg,
+            transformSummary(robotToMap).c_str());
+        return true;
+    }
+
+    bool recoveryDue() const
+    {
+        if (!params->enableMapRecovery || params->recoveryReloadAfterRejections <= 0)
+        {
+            return false;
+        }
+        if (consecutiveRejections_ < params->recoveryReloadAfterRejections)
+        {
+            return false;
+        }
+        if (lastRecoveryAttemptRejections_ < 0)
+        {
+            return true;
+        }
+        return consecutiveRejections_ - lastRecoveryAttemptRejections_ >=
+            params->recoveryAttemptIntervalScans;
+    }
+
+    bool recoverLocalMapForPrior(
+        const PM::TransformationParameters& odomPredictedRobotToMap,
+        const PM::TransformationParameters& sensorToMapPrior,
+        const char* trigger)
+    {
+        if (!recoveryDue())
+        {
+            return false;
+        }
+
+        lastRecoveryAttemptRejections_ = consecutiveRejections_;
+        const Eigen::Vector2f centerXY = odomPredictedRobotToMap.topRightCorner(2, 1);
+
+        if (params->enableGlobalOutputMap)
+        {
+            PM::DataPoints sourceMap;
+            {
+                std::lock_guard<std::mutex> lock(globalOutputMapMutex_);
+                if (hasGlobalOutputMap_ && globalOutputMap_.getNbPoints() > 0)
+                {
+                    sourceMap = globalOutputMap_;
+                }
+            }
+
+            if (sourceMap.getNbPoints() > 0)
+            {
+                PM::DataPoints recoveredMap = cropPointsToRadius(
+                    sourceMap,
+                    centerXY,
+                    static_cast<float>(params->recoveryLocalMapRadiusM));
+                const int croppedPts = static_cast<int>(recoveredMap.getNbPoints());
+                capCloudPointsDeterministically(recoveredMap, params->recoveryLocalMapMaxPoints);
+                const int recoveredPts = static_cast<int>(recoveredMap.getNbPoints());
+                if (recoveredPts >= params->recoveryLocalMapMinPoints)
+                {
+                    normalizeMapNormals(recoveredMap);
+                    setMapperMap(recoveredMap);
+                    lastDeterministicMapUpdatePose_ = sensorToMapPrior;
+                    hasDeterministicMapUpdatePose_ = true;
+                    RCLCPP_WARN(this->get_logger(),
+                        "[RECOVERY] rebuilt local map from global output: trigger=%s rejects=%d "
+                        "global_pts=%d cropped_pts=%d local_pts=%d cap=%d radius=%.1fm center=(%.2f,%.2f) prior={%s}",
+                        trigger,
+                        consecutiveRejections_,
+                        static_cast<int>(sourceMap.getNbPoints()),
+                        croppedPts,
+                        recoveredPts,
+                        params->recoveryLocalMapMaxPoints,
+                        params->recoveryLocalMapRadiusM,
+                        static_cast<double>(centerXY(0)),
+                        static_cast<double>(centerXY(1)),
+                        transformSummary(sensorToMapPrior).c_str());
+                    return true;
+                }
+                RCLCPP_WARN(this->get_logger(),
+                    "[RECOVERY] global crop too small: trigger=%s pts=%d < %d radius=%.1fm center=(%.2f,%.2f)",
+                    trigger,
+                    recoveredPts,
+                    params->recoveryLocalMapMinPoints,
+                    params->recoveryLocalMapRadiusM,
+                    static_cast<double>(centerXY(0)),
+                    static_cast<double>(centerXY(1)));
+            }
+        }
+
+        if (lastGoodMapSnapshot_.valid && lastGoodMapSnapshot_.map.getNbPoints() > 0)
+        {
+            PM::DataPoints recoveredMap = lastGoodMapSnapshot_.map;
+            setMapperMap(recoveredMap);
+            lastDeterministicMapUpdatePose_ = lastGoodMapSnapshot_.sensorToMap;
+            hasDeterministicMapUpdatePose_ = true;
+            RCLCPP_WARN(this->get_logger(),
+                "[RECOVERY] reloaded last-good local map: trigger=%s rejects=%d snapshot_scan=%lu "
+                "map_pts=%d snapshot_pose={%s} current_prior={%s}",
+                trigger,
+                consecutiveRejections_,
+                static_cast<unsigned long>(lastGoodMapSnapshot_.acceptedScan),
+                static_cast<int>(lastGoodMapSnapshot_.map.getNbPoints()),
+                transformSummary(lastGoodMapSnapshot_.robotToMap).c_str(),
+                transformSummary(sensorToMapPrior).c_str());
+            return true;
+        }
+
+        RCLCPP_WARN(this->get_logger(),
+            "[RECOVERY] failed: no usable global crop or last-good snapshot. trigger=%s rejects=%d",
+            trigger,
+            consecutiveRejections_);
+        return false;
+    }
+
+    static PM::TransformationParameters yawOffsetPrior(
+        const PM::TransformationParameters& prior,
+        const double yawOffsetRad)
+    {
+        PM::TransformationParameters candidate = prior;
+        const int dim = static_cast<int>(prior.rows()) - 1;
+        PM::TransformationParameters yawOffset =
+            PM::TransformationParameters::Identity(prior.rows(), prior.cols());
+        yawOffset(0, 0) = static_cast<float>(std::cos(yawOffsetRad));
+        yawOffset(0, 1) = static_cast<float>(-std::sin(yawOffsetRad));
+        yawOffset(1, 0) = static_cast<float>(std::sin(yawOffsetRad));
+        yawOffset(1, 1) = static_cast<float>(std::cos(yawOffsetRad));
+        candidate.topLeftCorner(dim, dim) =
+            yawOffset.topLeftCorner(dim, dim) * prior.topLeftCorner(dim, dim);
+        return candidate;
+    }
+
+    bool tryRecoveryYawHypotheses(
+        PM::DataPoints& input,
+        const PM::TransformationParameters& sensorToMapPrior,
+        const std::chrono::time_point<std::chrono::steady_clock>& steadyTs,
+        PM::TransformationParameters& bestSensorToMap,
+        double& bestCost,
+        const char* trigger)
+    {
+        if (!params->enableMapRecovery ||
+            consecutiveRejections_ < params->recoveryReloadAfterRejections ||
+            mapper->getMap().getNbPoints() == 0)
+        {
+            return false;
+        }
+
+        const double offsetsDeg[] = {0.0, 5.0, -5.0, 10.0, -10.0, 20.0, -20.0};
+        bool found = false;
+        bestCost = std::numeric_limits<double>::infinity();
+        for (const double offsetDeg : offsetsDeg)
+        {
+            PM::TransformationParameters candidatePrior =
+                yawOffsetPrior(sensorToMapPrior, offsetDeg * M_PI / 180.0);
+            try
+            {
+                mapper->processInput(input, candidatePrior, steadyTs);
+                PM::TransformationParameters candidatePose = mapper->getPose();
+                PM::DataPoints inputInMapFrame =
+                    transformation->compute(input, candidatePose);
+                const MapOverlapStats overlap =
+                    estimateMapOverlap(inputInMapFrame, mapper->getMap());
+                const Eigen::MatrixXf correction = candidatePose * sensorToMapPrior.inverse();
+                const int dim = static_cast<int>(candidatePose.rows()) - 1;
+                const double tr = correction.topRightCorner(dim, 1).norm();
+                const double yawResidualDeg =
+                    std::abs(wrapToPi(
+                        yawFromTransform(candidatePose) -
+                        yawFromTransform(sensorToMapPrior))) * 180.0 / M_PI;
+                const double cost =
+                    8.0 * (1.0 - overlap.looseRatio) +
+                    4.0 * (1.0 - overlap.nearRatio) +
+                    0.25 * tr +
+                    0.02 * yawResidualDeg +
+                    0.01 * std::abs(offsetDeg);
+                if (overlap.sampled >= minMapOverlapSamples_ &&
+                    overlap.looseRatio >= std::max(0.25, params->minPoseOverlapLooseRatio - 0.20) &&
+                    cost < bestCost)
+                {
+                    bestCost = cost;
+                    bestSensorToMap = candidatePose;
+                    found = true;
+                }
+                RCLCPP_INFO(this->get_logger(),
+                    "[RECOVERY] hypothesis trigger=%s yaw_offset=%.1fdeg overlap=%.3f/%.3f tr=%.2fm yaw_res=%.1fdeg cost=%.3f accepted_candidate=%d",
+                    trigger,
+                    offsetDeg,
+                    overlap.nearRatio,
+                    overlap.looseRatio,
+                    tr,
+                    yawResidualDeg,
+                    cost,
+                    found && bestCost == cost);
+            }
+            catch (const std::exception& e)
+            {
+                RCLCPP_DEBUG(this->get_logger(),
+                    "[RECOVERY] hypothesis failed: trigger=%s yaw_offset=%.1fdeg error=%s",
+                    trigger,
+                    offsetDeg,
+                    e.what());
+            }
+        }
+
+        if (found)
+        {
+            RCLCPP_WARN(this->get_logger(),
+                "[RECOVERY] selected yaw hypothesis: trigger=%s cost=%.3f pose={%s}",
+                trigger,
+                bestCost,
+                transformSummary(bestSensorToMap).c_str());
+        }
+        return found;
+    }
+
+    const MapOverlapVoxelCache& overlapCacheForMap(const PM::DataPoints& currentMap) const
+    {
+        const uint64_t version = mapVersion_.load(std::memory_order_relaxed);
+        const int mapPoints = static_cast<int>(currentMap.getNbPoints());
+        std::lock_guard<std::mutex> lock(overlapVoxelCacheMutex_);
+        if (overlapVoxelCache_.mapVersion != version ||
+            overlapVoxelCache_.mapPoints != mapPoints)
+        {
+            const auto cacheStart = std::chrono::steady_clock::now();
+            overlapVoxelCache_.nearVoxels =
+                buildVoxelSet(currentMap, mapOverlapNearVoxelM_);
+            overlapVoxelCache_.looseVoxels =
+                buildVoxelSet(currentMap, mapOverlapLooseVoxelM_);
+            overlapVoxelCache_.mapVersion = version;
+            overlapVoxelCache_.mapPoints = mapPoints;
+            const double cacheMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - cacheStart).count();
+            RCLCPP_DEBUG(this->get_logger(),
+                "Rebuilt map-overlap voxel cache: version=%lu map_pts=%d near_voxels=%zu loose_voxels=%zu time=%.1fms",
+                static_cast<unsigned long>(version),
+                mapPoints,
+                overlapVoxelCache_.nearVoxels.size(),
+                overlapVoxelCache_.looseVoxels.size(),
+                cacheMs);
+        }
+        return overlapVoxelCache_;
+    }
+
     MapOverlapStats estimateMapOverlap(
         const PM::DataPoints& scanInMapFrame,
         const PM::DataPoints& currentMap) const
@@ -623,8 +1371,7 @@ private:
             return stats;
         }
 
-        const auto nearVoxels = buildVoxelSet(currentMap, mapOverlapNearVoxelM_);
-        const auto looseVoxels = buildVoxelSet(currentMap, mapOverlapLooseVoxelM_);
+        const MapOverlapVoxelCache& cache = overlapCacheForMap(currentMap);
         const int targetSamples = 1500;
         const int scanPoints = static_cast<int>(scanInMapFrame.getNbPoints());
         const int stride = std::max(1, scanPoints / targetSamples);
@@ -638,13 +1385,13 @@ private:
 
             ++stats.sampled;
             if (voxelNeighborhoodOccupied(
-                    nearVoxels,
+                    cache.nearVoxels,
                     voxelKeyForPoint(scanInMapFrame, col, mapOverlapNearVoxelM_)))
             {
                 ++stats.nearHits;
             }
             if (voxelNeighborhoodOccupied(
-                    looseVoxels,
+                    cache.looseVoxels,
                     voxelKeyForPoint(scanInMapFrame, col, mapOverlapLooseVoxelM_)))
             {
                 ++stats.looseHits;
@@ -673,9 +1420,25 @@ private:
 
     bool poseOverlapTooLow(const MapOverlapStats& stats) const
     {
-        return stats.sampled >= minMapOverlapSamples_ &&
-               (stats.nearRatio < params->minPoseOverlapNearRatio ||
-                stats.looseRatio < params->minPoseOverlapLooseRatio);
+        if (stats.sampled < minMapOverlapSamples_)
+        {
+            return false;
+        }
+
+        const bool looseGood =
+            stats.looseRatio >= params->minPoseOverlapLooseRatio;
+        const bool strongNear =
+            stats.nearRatio >= std::min(1.0, params->minPoseOverlapNearRatio + 0.12);
+        const bool nearGoodAndAlmostLoose =
+            stats.nearRatio >= params->minPoseOverlapNearRatio &&
+            stats.looseRatio >= std::max(0.0, params->minPoseOverlapLooseRatio - 0.08);
+
+        // Pose publication must be less brittle than map insertion. During
+        // articulated turns or right after a trim, the loose ratio can dip
+        // while the local/near geometry is still consistent. Rejecting the
+        // pose freezes map->odom, lets the wheel prior run away from the local
+        // map, and causes a permanent no-match cascade.
+        return !(looseGood || strongNear || nearGoodAndAlmostLoose);
     }
 
     bool registrationPoseOverlapsCurrentMap(
@@ -857,6 +1620,9 @@ private:
 
     bool deterministicMapUpdateDue(const PM::TransformationParameters& sensorToMap) const
     {
+        if (forceNextMapUpdate_) {
+            return true;
+        }
         if (!hasDeterministicMapUpdatePose_) {
             return true;
         }
@@ -925,12 +1691,11 @@ private:
 
             if (mapOverlapTooLow(overlap))
             {
-                lastDeterministicMapUpdatePose_ = acceptedSensorToMap;
-                hasDeterministicMapUpdatePose_ = true;
+                forceNextMapUpdate_ = true;
                 RCLCPP_WARN(this->get_logger(),
                     "Skipping map insertion: aligned scan does not overlap current map enough "
                     "(near %.3f threshold %.3f, loose %.3f threshold %.3f, sampled=%d). "
-                    "The map update baseline is advanced to avoid retrying every scan. "
+                    "Keeping the previous map-update baseline and forcing a retry on the next accepted scan. "
                     "Check /mapping/aligned_scan in Foxglove: if it is also misaligned, the issue is ICP/odom/TF; "
                     "if it is aligned while /mapping/map is broken, the map insertion path is at fault.",
                     overlap.nearRatio,
@@ -948,7 +1713,7 @@ private:
                 inputInMapFrame, updatedMap, acceptedSensorToMap);
         }
         normalizeMapNormals(updatedMap);
-        mapper->setMap(updatedMap);
+        setMapperMap(updatedMap);
 
         if (params->enableGlobalOutputMap)
         {
@@ -968,6 +1733,7 @@ private:
 
         lastDeterministicMapUpdatePose_ = acceptedSensorToMap;
         hasDeterministicMapUpdatePose_ = true;
+        forceNextMapUpdate_ = false;
 
         const double updateMs = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - updateStart).count();
@@ -996,10 +1762,118 @@ private:
         return true;
     }
 
+    bool updateMapFromOdomBridge(
+        const PM::DataPoints& inputInSensorFrame,
+        const PM::TransformationParameters& odomSensorToMap)
+    {
+        if (hasDeterministicMapUpdatePose_ &&
+            !deterministicMapUpdateDue(odomSensorToMap)) {
+            return false;
+        }
+
+        const auto updateStart = std::chrono::steady_clock::now();
+        PM::DataPoints currentMap = mapper->getMap();
+        PM::DataPoints inputInMapFrame =
+            transformation->compute(inputInSensorFrame, odomSensorToMap);
+        const bool creatingMap = currentMap.getNbPoints() == 0;
+        PM::DataPoints updatedMap = creatingMap ? inputInMapFrame : currentMap;
+        if (!creatingMap)
+        {
+            deterministicMapperModule_->inPlaceUpdateMap(
+                inputInMapFrame, updatedMap, odomSensorToMap);
+        }
+
+        normalizeMapNormals(updatedMap);
+        setMapperMap(updatedMap);
+
+        if (params->enableGlobalOutputMap)
+        {
+            std::lock_guard<std::mutex> lock(globalOutputMapMutex_);
+            if (!hasGlobalOutputMap_)
+            {
+                globalOutputMap_ = inputInMapFrame;
+                hasGlobalOutputMap_ = true;
+            }
+            else
+            {
+                globalOutputMapperModule_->inPlaceUpdateMap(
+                    inputInMapFrame, globalOutputMap_, odomSensorToMap);
+            }
+            ++globalOutputMapUpdates_;
+        }
+
+        lastDeterministicMapUpdatePose_ = odomSensorToMap;
+        hasDeterministicMapUpdatePose_ = true;
+        forceNextMapUpdate_ = false;
+
+        const double updateMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - updateStart).count();
+        if (params->enableGlobalOutputMap)
+        {
+            std::lock_guard<std::mutex> lock(globalOutputMapMutex_);
+            RCLCPP_WARN(this->get_logger(),
+                "[ODOM_BRIDGE] map update done: mode=%s scan_pts=%d local_map_pts=%d global_map_pts=%d time=%.1fms pose={%s}",
+                creatingMap ? "create" : "dead_reckoning_update",
+                static_cast<int>(inputInSensorFrame.getNbPoints()),
+                static_cast<int>(updatedMap.getNbPoints()),
+                static_cast<int>(globalOutputMap_.getNbPoints()),
+                updateMs,
+                transformSummary(odomSensorToMap).c_str());
+        }
+        else
+        {
+            RCLCPP_WARN(this->get_logger(),
+                "[ODOM_BRIDGE] map update done: mode=%s scan_pts=%d map_pts=%d time=%.1fms pose={%s}",
+                creatingMap ? "create" : "dead_reckoning_update",
+                static_cast<int>(inputInSensorFrame.getNbPoints()),
+                static_cast<int>(updatedMap.getNbPoints()),
+                updateMs,
+                transformSummary(odomSensorToMap).c_str());
+        }
+        return true;
+    }
+
     bool mapUpdateQualityGood(const RegistrationQualityGate::Result& qgResult) const
     {
         return qgResult.translation_correction_m <= params->maxMapUpdateTranslationCorrectionM &&
                qgResult.rotation_correction_deg <= params->maxMapUpdateRotationCorrectionDeg;
+    }
+
+    bool mapUpdateCorrectionAllowed(
+        const RegistrationQualityGate::Result& qgResult,
+        const MotionState& motion,
+        const double dtSecAccepted,
+        std::string& reason) const
+    {
+        if (mapUpdateQualityGood(qgResult))
+        {
+            reason = "static_map_update_gate";
+            return true;
+        }
+
+        if (!params->enableMotionAdaptiveGate || motion.pivot)
+        {
+            reason = "static_gate_failed";
+            return false;
+        }
+
+        const AdaptiveGateLimits limits = adaptiveGateLimits(motion, dtSecAccepted);
+        const double fastTranslationLimit =
+            std::min(limits.translationM, 2.0 * params->maxMapUpdateTranslationCorrectionM);
+        const bool allowed =
+            motion.aggressive &&
+            qgResult.translation_correction_m <= fastTranslationLimit &&
+            qgResult.rotation_correction_deg <= params->maxMapUpdateRotationCorrectionDeg;
+        std::ostringstream ss;
+        ss << (allowed ? "adaptive_fast_translation_gate" : "adaptive_fast_translation_rejected")
+           << " correction=" << qgResult.translation_correction_m << "m/"
+           << qgResult.rotation_correction_deg << "deg limit="
+           << fastTranslationLimit << "m/"
+           << params->maxMapUpdateRotationCorrectionDeg << "deg speed="
+           << motion.odomSpeedMs << "m/s accel=" << motion.odomAccelMs2
+           << "m/s2 yaw_rate=" << motion.dominantYawRateDegS << "deg/s";
+        reason = ss.str();
+        return allowed;
     }
 
     bool seedInitialMapIfNeeded(
@@ -1024,7 +1898,7 @@ private:
 
         PM::DataPoints initialMap = transformation->compute(inputInSensorFrame, sensorToMap);
         recomputeMapNormals(initialMap);
-        mapper->setMap(initialMap);
+        setMapperMap(initialMap);
 
         if (params->enableGlobalOutputMap)
         {
@@ -1080,9 +1954,142 @@ private:
         return result;
     }
 
+    static void capCloudPointsDeterministically(PM::DataPoints& cloud, const int maxPoints)
+    {
+        const int n = static_cast<int>(cloud.getNbPoints());
+        if (maxPoints <= 0 || n <= maxPoints)
+        {
+            return;
+        }
+
+        PM::DataPoints result = cloud.createSimilarEmpty();
+        result.conservativeResize(maxPoints);
+        for (int j = 0; j < maxPoints; ++j)
+        {
+            const int idx = static_cast<int>(
+                std::llround(static_cast<double>(j) * static_cast<double>(n - 1) /
+                             static_cast<double>(maxPoints - 1)));
+            result.setColFrom(j, cloud, std::min(idx, n - 1));
+        }
+        cloud = std::move(result);
+    }
+
+    bool rebuildLocalMapFromGlobalOutput(
+        const Eigen::Vector2f& robotXY,
+        const char* reason)
+    {
+        if (!params->enableGlobalOutputMap)
+        {
+            return false;
+        }
+
+        PM::DataPoints sourceMap;
+        {
+            std::lock_guard<std::mutex> lock(globalOutputMapMutex_);
+            if (!hasGlobalOutputMap_ || globalOutputMap_.getNbPoints() == 0)
+            {
+                return false;
+            }
+            sourceMap = globalOutputMap_;
+        }
+
+        PM::DataPoints localMap = cropPointsToRadius(
+            sourceMap,
+            robotXY,
+            static_cast<float>(params->mapTrimRadiusM));
+        const int croppedPts = static_cast<int>(localMap.getNbPoints());
+        capCloudPointsDeterministically(localMap, params->maxMapPointsBeforeTrim);
+        if (localMap.getNbPoints() == 0)
+        {
+            return false;
+        }
+
+        normalizeMapNormals(localMap);
+        setMapperMap(localMap);
+        overlapVoxelCache_ = MapOverlapVoxelCache{};
+
+        RCLCPP_INFO(this->get_logger(),
+            "Local ICP map rebuilt from global output after %s: global_pts=%d cropped_pts=%d local_pts=%d radius=%.0fm cap=%d.",
+            reason,
+            static_cast<int>(sourceMap.getNbPoints()),
+            croppedPts,
+            static_cast<int>(localMap.getNbPoints()),
+            params->mapTrimRadiusM,
+            params->maxMapPointsBeforeTrim);
+        return true;
+    }
+
+    bool odomBridgeRecoveryDue() const
+    {
+        if (!params->enableMapRecovery || params->recoveryReloadAfterRejections <= 0)
+        {
+            return false;
+        }
+        if (consecutiveOdomBridgeScans_ < params->recoveryReloadAfterRejections)
+        {
+            return false;
+        }
+        if (lastOdomBridgeRecoveryAttempt_ < 0)
+        {
+            return true;
+        }
+        return consecutiveOdomBridgeScans_ - lastOdomBridgeRecoveryAttempt_ >=
+            params->recoveryAttemptIntervalScans;
+    }
+
+    bool recoverLocalMapForOdomBridge(
+        const PM::TransformationParameters& robotToMap,
+        const char* reason)
+    {
+        if (!odomBridgeRecoveryDue())
+        {
+            return false;
+        }
+
+        lastOdomBridgeRecoveryAttempt_ = consecutiveOdomBridgeScans_;
+        const Eigen::Vector2f robotXY = robotToMap.topRightCorner(2, 1);
+        const bool recovered = rebuildLocalMapFromGlobalOutput(robotXY, reason);
+        if (recovered)
+        {
+            refreshMapPublicationSnapshot(reason);
+            RCLCPP_WARN(this->get_logger(),
+                "[ODOM_BRIDGE_RECOVERY] recentered local ICP map after %d bridge scans at robot_xy=(%.2f,%.2f). "
+                "Bridge scans still frozen: no dead-reckoning insertion into map.",
+                consecutiveOdomBridgeScans_,
+                static_cast<double>(robotXY(0)),
+                static_cast<double>(robotXY(1)));
+        }
+        else
+        {
+            RCLCPP_WARN(this->get_logger(),
+                "[ODOM_BRIDGE_RECOVERY] local-map recenter failed after %d bridge scans at robot_xy=(%.2f,%.2f).",
+                consecutiveOdomBridgeScans_,
+                static_cast<double>(robotXY(0)),
+                static_cast<double>(robotXY(1)));
+        }
+        return recovered;
+    }
+
     void refreshMapPublicationSnapshot(const char* reason)
     {
-        PM::DataPoints mapSnapshot = mapper->getMap();
+        PM::DataPoints mapSnapshot;
+        bool usingGlobalOutputMap = false;
+        const bool preferGlobal =
+            params->mapPublicationSource == "global" ||
+            (params->mapPublicationSource == "auto" && params->enableGlobalOutputMap);
+        if (preferGlobal && params->enableGlobalOutputMap)
+        {
+            std::lock_guard<std::mutex> lock(globalOutputMapMutex_);
+            if (hasGlobalOutputMap_ && globalOutputMap_.getNbPoints() > 0)
+            {
+                mapSnapshot = globalOutputMap_;
+                usingGlobalOutputMap = true;
+            }
+        }
+        if (mapSnapshot.getNbPoints() == 0)
+        {
+            mapSnapshot = mapper->getMap();
+        }
         if (mapSnapshot.getNbPoints() == 0) {
             RCLCPP_WARN(this->get_logger(),
                 "Map snapshot requested after %s, but mapper map is empty.",
@@ -1122,16 +2129,39 @@ private:
             latestMapReady_ = true;
         }
         needMapSnapshot_.store(false);
-        RCLCPP_INFO(this->get_logger(),
-            "Refreshed map publication snapshot after %s: full_pts=%d published_pts=%d.",
-            reason, fullMapPts, snapshotPoints);
+        if (hasInitialAcceptedRobotToMap_)
+        {
+            const Eigen::Vector2f robotXY = lastAcceptedRobotToMap_.topRightCorner(2, 1);
+            RCLCPP_INFO(this->get_logger(),
+                "Refreshed map publication snapshot after %s: source=%s policy=%s frame=%s robot_xy=(%.2f,%.2f) full_pts=%d published_pts=%d.",
+                reason,
+                usingGlobalOutputMap ? "global_output" : "local_icp",
+                params->mapPublicationSource.c_str(),
+                params->mapFrame.c_str(),
+                robotXY.x(),
+                robotXY.y(),
+                fullMapPts,
+                snapshotPoints);
+        }
+        else
+        {
+            RCLCPP_INFO(this->get_logger(),
+                "Refreshed map publication snapshot after %s: source=%s policy=%s frame=%s full_pts=%d published_pts=%d.",
+                reason,
+                usingGlobalOutputMap ? "global_output" : "local_icp",
+                params->mapPublicationSource.c_str(),
+                params->mapFrame.c_str(),
+                fullMapPts,
+                snapshotPoints);
+        }
     }
 
     bool publishedPosePlausible(
         const PM::TransformationParameters& robotToMap,
         const PM::TransformationParameters& odomPredictedRobotToMap,
         double dtSecAccepted,
-        std::string& reason) const
+        std::string& reason,
+        bool* priorConsistentLargeYawStep = nullptr) const
     {
         // Compare against last ACCEPTED pose, not previousRobotToMap (which is updated
         // even on rejection). Using a rejected pose as reference allows a cascade of
@@ -1149,11 +2179,37 @@ private:
             180.0 / M_PI;
         if (yawStepDeg > params->maxPoseYawStepDeg)
         {
-            std::ostringstream ss;
-            ss << "published pose yaw step too high: " << yawStepDeg << " deg > "
-               << params->maxPoseYawStepDeg << " deg (absolute cap, dt=" << dtSecAccepted << " s)";
-            reason = ss.str();
-            return false;
+            const double yawOdomResidualDeg =
+                std::abs(wrapToPi(
+                    yawFromTransform(robotToMap) -
+                    yawFromTransform(odomPredictedRobotToMap))) * 180.0 / M_PI;
+            if (yawOdomResidualDeg <= params->maxPoseYawOdomResidualDeg)
+            {
+                if (priorConsistentLargeYawStep)
+                {
+                    *priorConsistentLargeYawStep = true;
+                }
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                    "Large yaw step accepted because ICP agrees with odom prior: "
+                    "yaw_step=%.1fdeg > %.1fdeg, yaw_odom_residual=%.1fdeg <= %.1fdeg, dt=%.3fs. "
+                    "Map insertion will be frozen for this scan.",
+                    yawStepDeg,
+                    params->maxPoseYawStepDeg,
+                    yawOdomResidualDeg,
+                    params->maxPoseYawOdomResidualDeg,
+                    dtSecAccepted);
+            }
+            else
+            {
+                std::ostringstream ss;
+                ss << "published pose yaw step too high: " << yawStepDeg << " deg > "
+                   << params->maxPoseYawStepDeg << " deg and ICP-vs-odom yaw residual "
+                   << yawOdomResidualDeg << " deg > "
+                   << params->maxPoseYawOdomResidualDeg
+                   << " deg (dt=" << dtSecAccepted << " s)";
+                reason = ss.str();
+                return false;
+            }
         }
 
         const int dim = static_cast<int>(robotToMap.rows()) - 1;
@@ -1231,6 +2287,51 @@ private:
         return true;
     }
 
+    bool odomBridgeAllowed(
+        const MotionState& motion,
+        double dtSecAccepted,
+        const PM::TransformationParameters& odomPredictedRobotToMap,
+        const std::string& rejectedReason,
+        std::string& bridgeReason) const
+    {
+        if (!params->enableOdomBridge || lastAcceptedTimeStamp_.nanoseconds() == 0)
+        {
+            return false;
+        }
+
+        const bool triggeredBySpeed =
+            motion.odomSpeedMs >= params->odomBridgeMinSpeedMs;
+        const bool triggeredByRejects =
+            consecutiveRejections_ >= params->odomBridgeAfterRejections;
+        const bool triggeredByGap = dtSecAccepted > 0.5;
+        if (!triggeredBySpeed && !motion.aggressive && !triggeredByRejects && !triggeredByGap)
+        {
+            bridgeReason = "odom bridge inactive: trigger not reached";
+            return false;
+        }
+
+        std::string odomPlausibilityReason;
+        if (!publishedPosePlausible(
+                odomPredictedRobotToMap,
+                odomPredictedRobotToMap,
+                dtSecAccepted,
+                odomPlausibilityReason,
+                nullptr))
+        {
+            bridgeReason = "odom bridge refused: odom prior implausible: " +
+                odomPlausibilityReason;
+            return false;
+        }
+
+        std::ostringstream ss;
+        ss << "odom_bridge localization-only: " << rejectedReason
+           << " speed=" << motion.odomSpeedMs
+           << "m/s dt=" << dtSecAccepted
+           << "s rejects=" << consecutiveRejections_;
+        bridgeReason = ss.str();
+        return true;
+    }
+
     std::string appendToFilePath(const std::string& filePath, const std::string& suffix)
     {
         std::string::size_type const extensionPosition(filePath.find_last_of('.'));
@@ -1267,7 +2368,7 @@ private:
         {
             throw std::runtime_error("Invalid map dimension");
         }
-        mapper->setMap(map);
+        setMapperMap(map);
         if (params->enableGlobalOutputMap)
         {
             std::lock_guard<std::mutex> lock(globalOutputMapMutex_);
@@ -1281,6 +2382,36 @@ private:
     {
         robotPoseToSet = robotPose;
         hasToSetRobotPose = true;
+
+        // A pose reset changes the reference used by every temporal/plausibility
+        // gate.  Keeping the previous map's accepted pose caused the first valid
+        // ICP result after LoadMap to be rejected as a multi-metre "jump"; the
+        // rejected pose then remained the prior forever.  Clear all history that
+        // is expressed in the old localization epoch.  The next accepted scan
+        // becomes the new baseline and is still checked by the ICP quality gate.
+        const auto clockType = this->get_clock()->get_clock_type();
+        previousTimeStamp = rclcpp::Time(0, 0, clockType);
+        lastAcceptedTimeStamp_ = rclcpp::Time(0, 0, clockType);
+        previousRobotToMap = robotPose;
+        lastAcceptedRobotToMap_ = robotPose;
+        initialAcceptedRobotToMap_ = robotPose;
+        hasInitialAcceptedRobotToMap_ = false;
+        consecutiveRejections_ = 0;
+        consecutiveOdomBridgeScans_ = 0;
+        lastOdomBridgeRecoveryAttempt_ = -1;
+        lastRecoveryAttemptRejections_ = -1;
+        hasLastOdomPriorSpeed_ = false;
+        hasDeterministicMapUpdatePose_ = false;
+        forceNextMapUpdate_ = true;
+        lastGoodMapSnapshot_.valid = false;
+        // An explicit pose seed is authoritative; do not subsequently overwrite
+        // it with the generic "anchor map at first odom pose" startup path.
+        mapAnchoredAtInitialRobotPose_ = true;
+        needMapSnapshot_.store(true);
+
+        RCLCPP_INFO(this->get_logger(),
+            "Localization epoch reset with robot pose seed {%s}; temporal gates will re-baseline on the next accepted ICP scan.",
+            transformSummary(robotPose).c_str());
     }
 
     void saveTrajectory(const std::string& trajectoryFileName)
@@ -1434,6 +2565,20 @@ private:
             const double ffMs = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - t1_ff).count();
 
+            // Remove articulated trailer/operator points in filtering_frame before
+            // static YAML filters and before deskew/ICP. Static axis-aligned bboxes
+            // cannot cover high-articulation pivot turns without deleting too much
+            // useful environment.
+            if (usingFilteringFrame || params->filteringFrame == sensorFrame)
+            {
+                removeDynamicTrailerPoints(input, timeStamp);
+            }
+            else if (params->enableDynamicTrailerSelfFilter)
+            {
+                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                    "[SELF-FILTER] Dynamic trailer OBB skipped because filtering_frame transform is unavailable.");
+            }
+
             const auto t2_input = std::chrono::steady_clock::now();
             mapper->applyInputFilters(input);
             const double inputMs = std::chrono::duration<double, std::milli>(
@@ -1458,12 +2603,12 @@ private:
             const auto t0_deskew = std::chrono::steady_clock::now();
             if (params->deskew)
             {
-                // Skip deskewing during fast articulated turns. The linear TF interpolation
-                // in the Deskewer assumes the robot moves linearly between odom samples (20ms
-                // apart at 50Hz). During fast articulation, yaw changes non-linearly and the
-                // linear interpolation introduces more distortion than it removes.
+                // Skip only TF/odom deskewing during fast articulated turns. The IMU path is
+                // rotation-only gyro integration and is the preferred correction in pivots;
+                // suppressing it leaves the scan distorted exactly when it is needed most.
                 bool deskewAllowed = true;
-                if (previousTimeStamp.nanoseconds() != 0 && hasInitialAcceptedRobotToMap_)
+                if (params->deskewSource != "imu" &&
+                    previousTimeStamp.nanoseconds() != 0 && hasInitialAcceptedRobotToMap_)
                 {
                     const double scanDt =
                         std::max(1e-4, (timeStamp - previousTimeStamp).seconds());
@@ -1497,7 +2642,48 @@ private:
                                 std::lock_guard<std::mutex> lk(imuDeskewBufMutex_);
                                 imuSnap.assign(imuDeskewBuf_.begin(), imuDeskewBuf_.end());
                             }
-                            deskewOk = deskewer->deskewCloudImu(input, imuSnap, R_sensor_imu_);
+                            // Hybrid deskew: gyro rotation + odom-derived constant
+                            // linear velocity. Rotation stays slip-immune (IMU);
+                            // translation smear (~v·0.1 m at speed) is compensated
+                            // with an error bounded by the odom velocity error over
+                            // one scan, not the full displacement. Zero velocity
+                            // fallback (rotation-only) when the TF lookup fails.
+                            Eigen::Vector3d vSensorEnd = Eigen::Vector3d::Zero();
+                            if (input.times.size() > 0)
+                            {
+                                const int64_t scanEndNs = input.times.maxCoeff();
+                                const int64_t scanStartNs = std::max<int64_t>(
+                                    input.times.minCoeff(),
+                                    scanEndNs - 200'000'000LL);
+                                const double spanS = (scanEndNs - scanStartNs) * 1e-9;
+                                if (spanS > 0.01)
+                                {
+                                    try
+                                    {
+                                        const auto sensorToOdomEnd = findTransform(
+                                            sensorFrame, params->odomFrame,
+                                            rclcpp::Time(scanEndNs, timeStamp.get_clock_type()),
+                                            input.getHomogeneousDim());
+                                        const auto sensorToOdomStart = findTransform(
+                                            sensorFrame, params->odomFrame,
+                                            rclcpp::Time(scanStartNs, timeStamp.get_clock_type()),
+                                            input.getHomogeneousDim());
+                                        const Eigen::Vector3f vOdom =
+                                            (sensorToOdomEnd.topRightCorner(3, 1) -
+                                             sensorToOdomStart.topRightCorner(3, 1)) /
+                                            static_cast<float>(spanS);
+                                        vSensorEnd =
+                                            (sensorToOdomEnd.topLeftCorner(3, 3).transpose() * vOdom)
+                                                .cast<double>();
+                                    }
+                                    catch (const tf2::TransformException&)
+                                    {
+                                        // rotation-only fallback
+                                    }
+                                }
+                            }
+                            deskewOk = deskewer->deskewCloudImu(
+                                input, imuSnap, R_sensor_imu_, vSensorEnd);
                         }
                     }
                     else
@@ -1562,6 +2748,22 @@ private:
             PM::TransformationParameters sensorToOdom =
                 findTransform(sensorFrame, params->odomFrame, timeStamp, input.getHomogeneousDim(),
                               /*allowLatestFallback=*/false);
+            PM::TransformationParameters robotToSensor =
+                findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
+            if (params->anchorMapAtInitialRobotPose && !mapAnchoredAtInitialRobotPose_)
+            {
+                PM::TransformationParameters robotToOdom = sensorToOdom * robotToSensor;
+                PM::TransformationParameters initialOdomToMap =
+                    transformation->correctParameters(robotToOdom.inverse());
+                {
+                    std::lock_guard<std::mutex> lk(mapTfLock);
+                    odomToMap = initialOdomToMap;
+                }
+                mapAnchoredAtInitialRobotPose_ = true;
+                RCLCPP_INFO(this->get_logger(),
+                    "Anchored map at initial robot pose: map->robot(t0)=identity, odom_to_map={%s}",
+                    transformSummary(initialOdomToMap).c_str());
+            }
             PM::TransformationParameters sensorToMapBeforeUpdate;
             {
                 std::lock_guard<std::mutex> lk(mapTfLock);
@@ -1574,21 +2776,50 @@ private:
                 transformSummary(sensorToMapBeforeUpdate).c_str());
             if (hasToSetRobotPose)
             {
-                PM::TransformationParameters sensorToRobot =
-                    findTransform(sensorFrame, params->robotFrame, timeStamp, input.getHomogeneousDim());
+                PM::TransformationParameters sensorToRobot = robotToSensor.inverse();
                 sensorToMapBeforeUpdate = robotPoseToSet * sensorToRobot;
                 hasToSetRobotPose = false;
             }
 
+            const PM::TransformationParameters odomPredictedRobotToMap =
+                sensorToMapBeforeUpdate * robotToSensor;
+            const float dtSecPre = (previousTimeStamp.nanoseconds() != 0)
+                ? static_cast<float>((timeStamp - previousTimeStamp).seconds()) : 0.0f;
+            const float dtSecAcceptedPre = (lastAcceptedTimeStamp_.nanoseconds() != 0)
+                ? static_cast<float>((timeStamp - lastAcceptedTimeStamp_).seconds()) : dtSecPre;
+            MotionState motion = estimateMotionState(
+                odomPredictedRobotToMap, timeStamp, dtSecAcceptedPre);
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "[MOTION] dt=%.3fs odom_speed=%.2fm/s accel=%.2fm/s2 yaw_odom=%.1fdeg/s yaw_imu=%.1fdeg/s aggressive=%d pivot=%d rejects=%d",
+                motion.dtAcceptedS,
+                motion.odomSpeedMs,
+                motion.odomAccelMs2,
+                motion.odomYawRateDegS,
+                motion.imuYawRateDegS,
+                motion.aggressive,
+                motion.pivot,
+                consecutiveRejections_);
+
+            if (mappingEnabled_.load())
+            {
+                recoverLocalMapForPrior(
+                    odomPredictedRobotToMap,
+                    sensorToMapBeforeUpdate,
+                    "pre_icp");
+            }
+
             const bool seededInitialMap =
-                params->isMapping && seedInitialMapIfNeeded(input, sensorToMapBeforeUpdate);
+                mappingEnabled_.load() && seedInitialMapIfNeeded(input, sensorToMapBeforeUpdate);
 
             // ── ICP Phase 1: localisation (map non modifiee) ──
             // Une seule passe fine avec prior odom. Le M-estimateur Cauchy dans la
             // chaine outlier filters (_config.yaml) cree un paysage de cout lisse
             // qui evite les minima locaux sans necessiter de passe coarse preliminaire.
             // Budget: ~25ms (fine) + ~5ms (Phase 2) = 30ms < 50ms (20Hz).
-            const bool shouldMap = params->isMapping;
+            // Snapshot the service-controlled state once for this scan. A
+            // disable request received during a long registration takes effect
+            // no later than the next scan without being overwritten here.
+            const bool shouldMap = mappingEnabled_.load();
 
             mapper->setIsMapping(false);
 
@@ -1599,7 +2830,8 @@ private:
             // ── Passe fine (prior = odom, mapping OFF) ──
             PM::TransformationParameters sensorToMapAfterUpdate =
                 sensorToMapBeforeUpdate;
-            bool usedOdomPriorFallback = false;
+            bool localizationOnlyOdomBridge = false;
+            std::string localizationOnlyReason;
             try
             {
                 mapper->processInput(input, sensorToMapBeforeUpdate, steadyTs);
@@ -1608,7 +2840,22 @@ private:
             }
             catch (const PM::ConvergenceError& e)
             {
-                bool priorOverlapGood = false;
+                double recoveryCost = std::numeric_limits<double>::infinity();
+                if (tryRecoveryYawHypotheses(
+                        input,
+                        sensorToMapBeforeUpdate,
+                        steadyTs,
+                        sensorToMapAfterUpdate,
+                        recoveryCost,
+                        "convergence_error"))
+                {
+                    RCLCPP_WARN(this->get_logger(),
+                        "[RECOVERY] ICP convergence recovered by yaw hypotheses: cost=%.3f pose={%s}",
+                        recoveryCost,
+                        transformSummary(sensorToMapAfterUpdate).c_str());
+                }
+                else
+                {
                 MapOverlapStats priorOverlap;
                 double priorOverlapMs = 0.0;
                 if (shouldMap && mapper->getMap().getNbPoints() > 0)
@@ -1619,28 +2866,30 @@ private:
                     priorOverlap = estimateMapOverlap(inputAtPrior, mapper->getMap());
                     priorOverlapMs = std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - priorOverlapStart).count();
-                    // This fallback is intentionally looser than the normal map
-                    // update gate. It is used only when ICP fails before returning
-                    // a pose; accepting the odom prior for one scan is safer than
-                    // letting a corridor/garage aliasing failure freeze map growth.
-                    priorOverlapGood =
-                        priorOverlap.nearRatio >= 0.15 ||
-                        priorOverlap.looseRatio >= 0.30;
                 }
 
-                if (priorOverlapGood)
+                std::ostringstream convergenceReason;
+                convergenceReason
+                    << "ICP convergence failure: " << e.what()
+                    << " prior_overlap near=" << priorOverlap.nearRatio
+                    << " loose=" << priorOverlap.looseRatio;
+                if (odomBridgeAllowed(
+                        motion,
+                        dtSecAcceptedPre,
+                        odomPredictedRobotToMap,
+                        convergenceReason.str(),
+                        localizationOnlyReason))
                 {
-                    usedOdomPriorFallback = true;
+                    localizationOnlyOdomBridge = true;
                     sensorToMapAfterUpdate = sensorToMapBeforeUpdate;
                     RCLCPP_WARN(this->get_logger(),
-                        "ICP convergence failure, but odom prior overlaps current map "
-                        "(near %.3f, loose %.3f, sampled=%d, check=%.1fms). "
-                        "Accepting odom prior for this scan to keep map growth alive: %s",
+                        "[ODOM_BRIDGE] %s (prior overlap near %.3f loose %.3f sampled=%d check=%.1fms). "
+                        "Publishing odom prior; map insertion will be marked as bridge/dead-reckoning.",
+                        localizationOnlyReason.c_str(),
                         priorOverlap.nearRatio,
                         priorOverlap.looseRatio,
                         priorOverlap.sampled,
-                        priorOverlapMs,
-                        e.what());
+                        priorOverlapMs);
                 }
                 else
                 {
@@ -1682,6 +2931,7 @@ private:
                     previousTimeStamp = timeStamp;
                     return;
                 }
+                }
             }
             catch (const std::exception& e)
             {
@@ -1710,9 +2960,25 @@ private:
             RCLCPP_DEBUG_STREAM(this->get_logger(), "ICP fine: " << icpMs << " ms");
 
             RCLCPP_DEBUG(this->get_logger(),
-                "%s result: pose={%s}",
-                usedOdomPriorFallback ? "Odom prior fallback" : "ICP",
+                "ICP result: pose={%s}",
                 transformSummary(sensorToMapAfterUpdate).c_str());
+
+            if (!maybeConstrainPlanarPose(
+                    sensorToMapAfterUpdate,
+                    robotToSensor,
+                    odomPredictedRobotToMap,
+                    "post_icp"))
+            {
+                mapper->setIsMapping(shouldMap);
+                ++consecutiveRejections_;
+                ++scansRejected_;
+                const float dtA = (lastAcceptedTimeStamp_.nanoseconds() != 0)
+                    ? static_cast<float>((timeStamp - lastAcceptedTimeStamp_).seconds()) : 0.0f;
+                publishScanStatus(timeStamp, false, "non_planar_pose_rejected",
+                    static_cast<int>(input.getNbPoints()), 0.0f, 0.0f, 0.0f, dtA);
+                previousTimeStamp = timeStamp;
+                return;
+            }
 
             // ── Quality gate ──
             // dtSec pour le gate velocity/yaw = temps depuis le DERNIER SCAN ACCEPTE.
@@ -1722,10 +2988,8 @@ private:
             // fantome (ex: 1.3m/50ms=26m/s) → cascade de rejets infinie.
             // On utilise lastAcceptedTimeStamp_ pour que dtSec = temps depuis dernier
             // scan accepte → velocity = taux de derive odom (physiquement sense).
-            const float dtSec = (previousTimeStamp.nanoseconds() != 0)
-                ? static_cast<float>((timeStamp - previousTimeStamp).seconds()) : 0.0f;
-            const float dtSecAccepted = (lastAcceptedTimeStamp_.nanoseconds() != 0)
-                ? static_cast<float>((timeStamp - lastAcceptedTimeStamp_).seconds()) : dtSec;
+            const float dtSec = dtSecPre;
+            const float dtSecAccepted = dtSecAcceptedPre;
             const auto qgResult = qualityGate_.check(
                 sensorToMapBeforeUpdate, sensorToMapAfterUpdate,
                 static_cast<int>(input.getNbPoints()), dtSecAccepted, icpMs);
@@ -1739,8 +3003,22 @@ private:
                 dtSecAccepted,
                 qgResult.velocity_ms);
 
+            bool gateRelaxedAccept = false;
             if (!qgResult.accepted)
             {
+                std::string adaptiveReason;
+                const bool adaptiveAccepted =
+                    adaptiveGateAccepts(qgResult, motion, dtSecAccepted, adaptiveReason);
+                if (adaptiveAccepted)
+                {
+                    RCLCPP_WARN(this->get_logger(),
+                        "[GATE] %s", adaptiveReason.c_str());
+                }
+                else if (!adaptiveReason.empty())
+                {
+                    RCLCPP_WARN(this->get_logger(),
+                        "[GATE] %s", adaptiveReason.c_str());
+                }
                 // Cascade recovery — after N consecutive rejections, relax the quality gate
                 // proportionally to how long the cascade has lasted.
                 // Rationale: a stale odomToMap accumulates ICP-correction drift that makes
@@ -1758,6 +3036,7 @@ private:
                 const double relaxation_factor =
                     1.0 + std::min(consecutiveRejections_, 30) / 15.0;
                 const bool inCascadeRecovery =
+                    !adaptiveAccepted &&
                     threshold > 0 &&
                     consecutiveRejections_ >= threshold &&
                     !rejectionIsFundamental &&
@@ -1766,7 +3045,7 @@ private:
                     qgResult.rotation_correction_deg <=
                         params->maxRotationCorrectionDeg * relaxation_factor;
 
-                if (!inCascadeRecovery)
+                if (!adaptiveAccepted && !inCascadeRecovery)
                 {
                     mapper->setIsMapping(shouldMap);  // Restaurer: map non modifiee
                     ++consecutiveRejections_;
@@ -1785,86 +3064,138 @@ private:
                     return;
                 }
 
-                RCLCPP_WARN(this->get_logger(),
-                    "CASCADE RECOVERY: overriding quality gate after %d rejections"
-                    " (relaxation=%.2fx) — reason='%s' correction=%.2fm/%.1fdeg"
-                    " (relaxed limits %.2fm/%.1fdeg)",
-                    consecutiveRejections_,
-                    relaxation_factor,
-                    qgResult.rejection_reason.c_str(),
-                    qgResult.translation_correction_m,
-                    qgResult.rotation_correction_deg,
-                    params->maxTranslationCorrection * relaxation_factor,
-                    params->maxRotationCorrectionDeg * relaxation_factor);
+                if (inCascadeRecovery)
+                {
+                    RCLCPP_WARN(this->get_logger(),
+                        "CASCADE RECOVERY: overriding quality gate after %d rejections"
+                        " (relaxation=%.2fx) — reason='%s' correction=%.2fm/%.1fdeg"
+                        " (relaxed limits %.2fm/%.1fdeg)",
+                        consecutiveRejections_,
+                        relaxation_factor,
+                        qgResult.rejection_reason.c_str(),
+                        qgResult.translation_correction_m,
+                        qgResult.rotation_correction_deg,
+                        params->maxTranslationCorrection * relaxation_factor,
+                        params->maxRotationCorrectionDeg * relaxation_factor);
+                }
                 // Fall through — plausibility gate (publishedPosePlausible) still applies.
+                gateRelaxedAccept = true;
             }
 
             PM::TransformationParameters currentOdomToMap =
                 transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
 
-            PM::TransformationParameters robotToSensor =
-                findTransform(params->robotFrame, sensorFrame, timeStamp, input.getHomogeneousDim());
             PM::TransformationParameters robotToMap = sensorToMapAfterUpdate * robotToSensor;
             // Pose prédite par l'odom seul (avant ICP) — référence directionnelle pour
             // détecter les convergences vers la zone dense d'origine (backwards).
-            const PM::TransformationParameters odomPredictedRobotToMap =
-                sensorToMapBeforeUpdate * robotToSensor;
 
             std::string publishedGateReason;
-            if (!publishedPosePlausible(robotToMap, odomPredictedRobotToMap, dtSecAccepted, publishedGateReason))
+            bool priorConsistentLargeYawStep = false;
+            if (!publishedPosePlausible(
+                    robotToMap,
+                    odomPredictedRobotToMap,
+                    dtSecAccepted,
+                    publishedGateReason,
+                    &priorConsistentLargeYawStep))
             {
-                mapper->setIsMapping(shouldMap);  // Restaurer: map non modifiee
-                ++consecutiveRejections_;
-                ++scansRejected_;
-                RCLCPP_WARN(this->get_logger(),
-                    "Scan rejected after ICP because published robot pose would jump: %s",
-                    publishedGateReason.c_str());
-                publishScanStatus(timeStamp, false, publishedGateReason,
-                    qgResult.input_points,
-                    static_cast<float>(qgResult.translation_correction_m),
-                    static_cast<float>(qgResult.rotation_correction_deg),
-                    static_cast<float>(qgResult.registration_time_ms),
-                    dtSecAccepted);
-                // Avancer previousTimeStamp pour que le prochain scan ait dt=1 scan,
-                // pas dt accumule depuis le dernier accepte.
-                // NE PAS mettre a jour lastAcceptedRobotToMap_ : la pose rejetee ne
-                // doit pas devenir la reference du prochain check de plausibilite.
-                previousTimeStamp = timeStamp;
-                return;
+                if (odomBridgeAllowed(
+                        motion,
+                        dtSecAccepted,
+                        odomPredictedRobotToMap,
+                        publishedGateReason,
+                        localizationOnlyReason))
+                {
+                    localizationOnlyOdomBridge = true;
+                    sensorToMapAfterUpdate = sensorToMapBeforeUpdate;
+                    robotToMap = odomPredictedRobotToMap;
+                    currentOdomToMap =
+                        transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
+                    priorConsistentLargeYawStep = false;
+                    RCLCPP_WARN(this->get_logger(),
+                        "[ODOM_BRIDGE] %s. Publishing odom prior and freezing map insertion.",
+                        localizationOnlyReason.c_str());
+                }
+                else
+                {
+                    mapper->setIsMapping(shouldMap);  // Restaurer: map non modifiee
+                    ++consecutiveRejections_;
+                    ++scansRejected_;
+                    RCLCPP_WARN(this->get_logger(),
+                        "Scan rejected after ICP because published robot pose would jump: %s",
+                        publishedGateReason.c_str());
+                    publishScanStatus(timeStamp, false, publishedGateReason,
+                        qgResult.input_points,
+                        static_cast<float>(qgResult.translation_correction_m),
+                        static_cast<float>(qgResult.rotation_correction_deg),
+                        static_cast<float>(qgResult.registration_time_ms),
+                        dtSecAccepted);
+                    // Avancer previousTimeStamp pour que le prochain scan ait dt=1 scan,
+                    // pas dt accumule depuis le dernier accepte.
+                    // NE PAS mettre a jour lastAcceptedRobotToMap_ : la pose rejetee ne
+                    // doit pas devenir la reference du prochain check de plausibilite.
+                    previousTimeStamp = timeStamp;
+                    return;
+                }
             }
 
-            if (shouldMap && mapper->getMap().getNbPoints() > 0)
+            if (!localizationOnlyOdomBridge && shouldMap && mapper->getMap().getNbPoints() > 0)
             {
                 MapOverlapStats registrationOverlap;
                 double registrationOverlapMs = 0.0;
                 if (!registrationPoseOverlapsCurrentMap(
                         input, sensorToMapAfterUpdate, registrationOverlap, registrationOverlapMs))
                 {
-                    mapper->setIsMapping(shouldMap);
-                    ++consecutiveRejections_;
-                    ++scansRejected_;
                     std::ostringstream reason;
                     reason << "registration overlap too low: near "
                            << registrationOverlap.nearRatio << " < " << params->minPoseOverlapNearRatio
                            << " or loose " << registrationOverlap.looseRatio << " < " << params->minPoseOverlapLooseRatio;
-                    RCLCPP_WARN(this->get_logger(),
-                        "Scan rejected after ICP because aligned scan does not overlap current map enough "
-                        "(near %.3f threshold %.3f, loose %.3f threshold %.3f, sampled=%d, time=%.1fms). "
-                        "Rejecting odom pose before publication to prevent map/odom cascade.",
-                        registrationOverlap.nearRatio,
-                        params->minPoseOverlapNearRatio,
-                        registrationOverlap.looseRatio,
-                        params->minPoseOverlapLooseRatio,
-                        registrationOverlap.sampled,
-                        registrationOverlapMs);
-                    publishScanStatus(timeStamp, false, reason.str(),
-                        qgResult.input_points,
-                        static_cast<float>(qgResult.translation_correction_m),
-                        static_cast<float>(qgResult.rotation_correction_deg),
-                        static_cast<float>(qgResult.registration_time_ms),
-                        dtSecAccepted);
-                    previousTimeStamp = timeStamp;
-                    return;
+                    if (odomBridgeAllowed(
+                            motion,
+                            dtSecAccepted,
+                            odomPredictedRobotToMap,
+                            reason.str(),
+                            localizationOnlyReason))
+                    {
+                        localizationOnlyOdomBridge = true;
+                        sensorToMapAfterUpdate = sensorToMapBeforeUpdate;
+                        robotToMap = odomPredictedRobotToMap;
+                        currentOdomToMap =
+                            transformation->correctParameters(sensorToMapAfterUpdate * sensorToOdom.inverse());
+                        RCLCPP_WARN(this->get_logger(),
+                            "[ODOM_BRIDGE] %s (overlap near %.3f/%.3f loose %.3f/%.3f sampled=%d check=%.1fms). "
+                            "Publishing odom prior and freezing map insertion.",
+                            localizationOnlyReason.c_str(),
+                            registrationOverlap.nearRatio,
+                            params->minPoseOverlapNearRatio,
+                            registrationOverlap.looseRatio,
+                            params->minPoseOverlapLooseRatio,
+                            registrationOverlap.sampled,
+                            registrationOverlapMs);
+                    }
+                    else
+                    {
+                        mapper->setIsMapping(shouldMap);
+                        ++consecutiveRejections_;
+                        ++scansRejected_;
+                        RCLCPP_WARN(this->get_logger(),
+                            "Scan rejected after ICP because aligned scan does not overlap current map enough "
+                            "(near %.3f threshold %.3f, loose %.3f threshold %.3f, sampled=%d, time=%.1fms). "
+                            "Rejecting odom pose before publication to prevent map/odom cascade.",
+                            registrationOverlap.nearRatio,
+                            params->minPoseOverlapNearRatio,
+                            registrationOverlap.looseRatio,
+                            params->minPoseOverlapLooseRatio,
+                            registrationOverlap.sampled,
+                            registrationOverlapMs);
+                        publishScanStatus(timeStamp, false, reason.str(),
+                            qgResult.input_points,
+                            static_cast<float>(qgResult.translation_correction_m),
+                            static_cast<float>(qgResult.rotation_correction_deg),
+                            static_cast<float>(qgResult.registration_time_ms),
+                            dtSecAccepted);
+                        previousTimeStamp = timeStamp;
+                        return;
+                    }
                 }
             }
 
@@ -1876,29 +3207,112 @@ private:
             // Instead, insert the accepted scan in the map at Phase-1 pose.
             consecutiveRejections_ = 0;
             ++scansAccepted_;
-            publishScanStatus(timeStamp, true, "",
+            publishScanStatus(timeStamp, true,
+                localizationOnlyOdomBridge ? localizationOnlyReason : "",
                 qgResult.input_points,
                 static_cast<float>(qgResult.translation_correction_m),
                 static_cast<float>(qgResult.rotation_correction_deg),
                 static_cast<float>(qgResult.registration_time_ms),
-                dtSecAccepted);
+                dtSecAccepted,
+                priorConsistentLargeYawStep);
             publishAlignedScan(input, sensorToMapAfterUpdate, timeStamp);
             if (shouldMap)
             {
                 bool mapChanged = false;
-                if (mapUpdateQualityGood(qgResult))
+                const int mapPtsBeforeDecision =
+                    static_cast<int>(mapper->getMap().getNbPoints());
+                const char* mapDecision = "not_evaluated";
+                std::string mapGateReason;
+                const bool mapCorrectionAllowed =
+                    mapUpdateCorrectionAllowed(qgResult, motion, dtSecAccepted, mapGateReason);
+                const bool motionInsertionRisk =
+                    motion.pivot &&
+                    (qgResult.translation_correction_m > params->pivotMaxTranslationCorrectionM ||
+                     qgResult.rotation_correction_deg > params->maxMapUpdateRotationCorrectionDeg);
+                if (localizationOnlyOdomBridge)
                 {
-                    mapChanged = updateMapDeterministically(input, sensorToMapAfterUpdate);
+                    ++consecutiveOdomBridgeScans_;
+                    if (params->allowOdomBridgeMapInsertion)
+                    {
+                        mapChanged = updateMapFromOdomBridge(input, sensorToMapAfterUpdate);
+                        mapDecision = mapChanged ? "odom_bridge_inserted" : "odom_bridge_not_due";
+                        if (!mapChanged)
+                        {
+                            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                "Skipping map insertion for odom-bridge scan: deterministic update not due. "
+                                "Odom/path updated only.");
+                        }
+                    }
+                    else
+                    {
+                        mapDecision = "odom_bridge_freeze";
+                        if (recoverLocalMapForOdomBridge(robotToMap, "odom_bridge_freeze"))
+                        {
+                            mapDecision = "odom_bridge_recentered";
+                            mapChanged = true;
+                        }
+                        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                            "Skipping map insertion for odom-bridge scan. Odom/path updated only; "
+                            "dead-reckoning scans are not inserted into the ICP map.");
+                    }
+                }
+                else if (mapCorrectionAllowed)
+                {
+                    consecutiveOdomBridgeScans_ = 0;
+                    lastOdomBridgeRecoveryAttempt_ = -1;
+                    if (priorConsistentLargeYawStep)
+                    {
+                        mapDecision = "turn_recovery_freeze";
+                        RCLCPP_WARN(this->get_logger(),
+                            "Skipping map insertion for accepted turn-recovery scan: large yaw step is "
+                            "consistent with odom prior, but scan distortion/low overlap risk is high. "
+                            "Odom/path updated; map waits for the next stable scan.");
+                    }
+                    else if (motionInsertionRisk)
+                    {
+                        mapDecision = "motion_risk_freeze";
+                        RCLCPP_WARN(this->get_logger(),
+                            "Skipping map insertion during aggressive motion: speed=%.2fm/s accel=%.2fm/s2 "
+                            "yaw_rate=%.1fdeg/s pivot=%d correction=%.3fm/%.1fdeg. Odom/path updated.",
+                            motion.odomSpeedMs,
+                            motion.odomAccelMs2,
+                            motion.dominantYawRateDegS,
+                            motion.pivot,
+                            qgResult.translation_correction_m,
+                            qgResult.rotation_correction_deg);
+                    }
+                    else
+                    {
+                        mapChanged = updateMapDeterministically(input, sensorToMapAfterUpdate);
+                        mapDecision = mapChanged ? "inserted_or_seeded" : "not_due_or_overlap_skip";
+                    }
                 }
                 else
                 {
+                    consecutiveOdomBridgeScans_ = 0;
+                    lastOdomBridgeRecoveryAttempt_ = -1;
+                    mapDecision = "correction_limit_skip";
                     RCLCPP_WARN(this->get_logger(),
-                        "Skipping map insertion for accepted scan: ICP correction %.3fm %.1fdeg exceeds map-update limits %.3fm %.1fdeg. Odom/path still published.",
+                        "Skipping map insertion for accepted scan: %s. Odom/path still published.",
+                        mapGateReason.c_str());
+                    RCLCPP_DEBUG(this->get_logger(),
+                        "Map-update correction details: correction %.3fm %.1fdeg static_limits %.3fm %.1fdeg.",
                         qgResult.translation_correction_m,
                         qgResult.rotation_correction_deg,
                         params->maxMapUpdateTranslationCorrectionM,
                         params->maxMapUpdateRotationCorrectionDeg);
                 }
+                const int mapPtsAfterDecision =
+                    static_cast<int>(mapper->getMap().getNbPoints());
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                    "[MAP_DECISION] decision=%s changed=%d pts=%d->%d correction=%.3fm/%.1fdeg pose={%s}",
+                    mapDecision,
+                    mapChanged,
+                    mapPtsBeforeDecision,
+                    mapPtsAfterDecision,
+                    qgResult.translation_correction_m,
+                    qgResult.rotation_correction_deg,
+                    transformSummary(sensorToMapAfterUpdate).c_str());
 
                 // ── Periodic map trimming (legacy, disabled for large-area mapping) ──
                 // Permanently crops the global map — discards data outside mapTrimRadiusM_.
@@ -1916,17 +3330,36 @@ private:
                     if (mapPts > params->maxMapPointsBeforeTrim)
                     {
                         const Eigen::Vector2f robotXY = robotToMap.topRightCorner(2, 1);
-                        PM::DataPoints trimmedMap =
-                            cropPointsToRadius(
-                                currentMap,
-                                robotXY,
-                                static_cast<float>(params->mapTrimRadiusM));
-                        mapper->setMap(trimmedMap);
-                        RCLCPP_INFO(this->get_logger(),
-                            "Map trimmed: %d → %d pts (radius=%.0fm, threshold=%d).",
-                            mapPts, static_cast<int>(trimmedMap.getNbPoints()),
-                            params->mapTrimRadiusM, params->maxMapPointsBeforeTrim);
+                        const bool rebuiltFromGlobal =
+                            rebuildLocalMapFromGlobalOutput(robotXY, "periodic trim");
+                        if (!rebuiltFromGlobal)
+                        {
+                            PM::DataPoints trimmedMap =
+                                cropPointsToRadius(
+                                    currentMap,
+                                    robotXY,
+                                    static_cast<float>(params->mapTrimRadiusM));
+                            const int radiusTrimPts = static_cast<int>(trimmedMap.getNbPoints());
+                            capCloudPointsDeterministically(trimmedMap, params->maxMapPointsBeforeTrim);
+                            setMapperMap(trimmedMap);
+                            overlapVoxelCache_ = MapOverlapVoxelCache{};
+                            RCLCPP_INFO(this->get_logger(),
+                                "Map trimmed: %d → %d → %d pts (radius=%.0fm, cap=%d).",
+                                mapPts, radiusTrimPts, static_cast<int>(trimmedMap.getNbPoints()),
+                                params->mapTrimRadiusM, params->maxMapPointsBeforeTrim);
+                        }
                     }
+                }
+
+                if (mapChanged && !localizationOnlyOdomBridge &&
+                    !motionInsertionRisk && !priorConsistentLargeYawStep)
+                {
+                    saveGoodMapSnapshot(
+                        sensorToMapAfterUpdate,
+                        robotToMap,
+                        qgResult,
+                        timeStamp,
+                        "accepted_map_update");
                 }
 
                 mapper->setIsMapping(true);
@@ -1962,6 +3395,9 @@ private:
             }
             lastAcceptedTimeStamp_ = timeStamp;    // advance only on acceptance
             lastAcceptedRobotToMap_ = robotToMap;  // advance only on acceptance
+            lastOdomPriorSpeedMs_ = motion.odomSpeedMs;
+            hasLastOdomPriorSpeed_ = true;
+            lastRecoveryAttemptRejections_ = -1;
             {
                 std::lock_guard<std::mutex> lk(mapTfLock);
                 odomToMap = currentOdomToMap;
@@ -1980,6 +3416,45 @@ private:
                 PointMatcher_ROS::pointMatcherTransformationToOdomMsg<float>(
                     robotToMap, params->mapFrame, params->robotFrame, timeStamp);
 
+            // ── Honest pose covariance ──
+            // Downstream consumers (imu_odom z-correction, fusion backends) need
+            // to know how much to trust this pose; an all-zero covariance claims
+            // perfection even while dead-reckoning. Coarse heuristic from the
+            // registration evidence of this very scan.
+            double sigmaXY;
+            double sigmaYawRad;
+            if (localizationOnlyOdomBridge)
+            {
+                // Odom-bridge scan: pure odom prior, no ICP evidence.
+                sigmaXY = 0.30 + 0.50 * motion.odomSpeedMs * std::max(0.0f, dtSecAccepted);
+                sigmaYawRad = 8.0 * M_PI / 180.0;
+            }
+            else
+            {
+                sigmaXY = 0.02 + 0.25 * qgResult.translation_correction_m;
+                sigmaYawRad = (0.2 + 0.25 * qgResult.rotation_correction_deg) * M_PI / 180.0;
+                if (gateRelaxedAccept)
+                {
+                    // Accepted through adaptive-gate/cascade relaxation only.
+                    sigmaXY *= 3.0;
+                    sigmaYawRad *= 3.0;
+                }
+            }
+            sigmaXY = std::min(sigmaXY, 5.0);
+            sigmaYawRad = std::min(sigmaYawRad, M_PI);
+            const double sigmaZ = 2.0 * sigmaXY;              // weakly observed on flat ground
+            const double sigmaRollPitch = 2.0 * sigmaYawRad;  // follows prior under force4DOF
+            odomMsgOut.pose.covariance[0]  = sigmaXY * sigmaXY;
+            odomMsgOut.pose.covariance[7]  = sigmaXY * sigmaXY;
+            odomMsgOut.pose.covariance[14] = sigmaZ * sigmaZ;
+            odomMsgOut.pose.covariance[21] = sigmaRollPitch * sigmaRollPitch;
+            odomMsgOut.pose.covariance[28] = sigmaRollPitch * sigmaRollPitch;
+            odomMsgOut.pose.covariance[35] = sigmaYawRad * sigmaYawRad;
+            // Angular twist is never estimated here — mark it untrusted.
+            odomMsgOut.twist.covariance[21] = 1e3;
+            odomMsgOut.twist.covariance[28] = 1e3;
+            odomMsgOut.twist.covariance[35] = 1e3;
+
             if (previousTimeStamp.nanoseconds() != 0)
             {
                 const float deltaTime = static_cast<float>((timeStamp - previousTimeStamp).seconds());
@@ -1992,12 +3467,23 @@ private:
                     odomMsgOut.twist.twist.linear.x = vel(0);
                     odomMsgOut.twist.twist.linear.y = vel(1);
                     odomMsgOut.twist.twist.linear.z = vel(2);
+                    // Finite difference of two pose draws → var = 2·σ²/dt².
+                    const double velVar =
+                        2.0 * sigmaXY * sigmaXY /
+                        (static_cast<double>(deltaTime) * static_cast<double>(deltaTime));
+                    odomMsgOut.twist.covariance[0]  = velVar;
+                    odomMsgOut.twist.covariance[7]  = velVar;
+                    odomMsgOut.twist.covariance[14] = velVar;
                 }
             }
             previousTimeStamp = timeStamp;
             previousRobotToMap = robotToMap;
 
             odomPublisher->publish(odomMsgOut);
+            if (!localizationOnlyOdomBridge)
+            {
+                icpMeasurementPublisher->publish(odomMsgOut);
+            }
 
             // ── Trajectoire (nav_msgs/Path) pour Foxglove ──
             nav_msgs::msg::Path pathToPublish;
@@ -2158,15 +3644,26 @@ private:
         const uint64_t accepted = scansAccepted_.load();
         const uint64_t rejected = scansRejected_.load();
         const int64_t stampNs = lastPointCloudStampNs_.load();
+        PM::TransformationParameters currentOdomToMap;
+        {
+            std::lock_guard<std::mutex> lk(mapTfLock);
+            currentOdomToMap = odomToMap;
+        }
+        const std::string lastAccepted = hasInitialAcceptedRobotToMap_
+            ? transformSummary(lastAcceptedRobotToMap_)
+            : "none";
         RCLCPP_INFO(this->get_logger(),
-            "[MAPPER_HEARTBEAT] callbacks=%lu/%lu in_flight=%ld accepted=%lu rejected=%lu last_cloud_stamp=%.9f map=%lu",
+            "[MAPPER_HEARTBEAT] callbacks=%lu/%lu in_flight=%ld accepted=%lu rejected=%lu "
+            "last_cloud_stamp=%.9f map=%lu odom_to_map={%s} last_accepted_robot={%s}",
             static_cast<unsigned long>(completed),
             static_cast<unsigned long>(started),
             static_cast<long>(started) - static_cast<long>(completed),
             static_cast<unsigned long>(accepted),
             static_cast<unsigned long>(rejected),
             static_cast<double>(stampNs) * 1e-9,
-            static_cast<unsigned long>(mapper->getMap().getNbPoints()));
+            static_cast<unsigned long>(mapper->getMap().getNbPoints()),
+            transformSummary(currentOdomToMap).c_str(),
+            lastAccepted.c_str());
     }
 
     void publishTrajectoryPathSnapshot()
@@ -2270,9 +3767,30 @@ private:
     {
     	try
     	{
+		    const bool haveLocalizedPose = hasInitialAcceptedRobotToMap_;
+		    const PM::TransformationParameters liveRobotPose = haveLocalizedPose
+		        ? lastAcceptedRobotToMap_
+		        : PM::TransformationParameters();
     		loadMap(req->map_file_name.data);
             int homogeneousDim = params->is3D ? 4 : 3;
-            setRobotPose(PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(req->pose, homogeneousDim));
+            PM::TransformationParameters requestedPose =
+                PointMatcher_ROS::rosMsgToPointMatcherTransformation<float>(
+                    req->pose, homogeneousDim);
+            if (params->preserveRobotPoseOnMapLoad && haveLocalizedPose)
+            {
+                RCLCPP_INFO(this->get_logger(),
+                    "Hot map load: preserving live localized robot pose {%s} instead of forcing requested seed {%s}.",
+                    transformSummary(liveRobotPose).c_str(),
+                    transformSummary(requestedPose).c_str());
+                setRobotPose(liveRobotPose);
+            }
+            else
+            {
+                RCLCPP_INFO(this->get_logger(),
+                    "Cold map load: using requested robot pose seed {%s}.",
+                    transformSummary(requestedPose).c_str());
+                setRobotPose(requestedPose);
+            }
     		{
     		    std::lock_guard<std::mutex> lk(trajectoryMutex_);
     		    robotTrajectory->clear();
@@ -2301,12 +3819,14 @@ private:
     {
         RCLCPP_INFO(this->get_logger(), "Enabling mapping");
         isLocalizing_.store(true);
+        mappingEnabled_.store(true);
         mapper->setIsMapping(true);
     }
 
     void disableMappingCallback(const std::shared_ptr<std_srvs::srv::Empty::Request>, std::shared_ptr<std_srvs::srv::Empty::Response>)
     {
         RCLCPP_INFO(this->get_logger(), "Disabling mapping");
+        mappingEnabled_.store(false);
         mapper->setIsMapping(false);
     }
 
@@ -2319,6 +3839,7 @@ private:
     void disableLocCallback(const std::shared_ptr<std_srvs::srv::Empty::Request>, std::shared_ptr<std_srvs::srv::Empty::Response>)
     {
         RCLCPP_INFO(this->get_logger(), "Disabling localization");
+        mappingEnabled_.store(false);
         if (mapper->getIsMapping()) { mapper->setIsMapping(false); }
         isLocalizing_.store(false);
     }

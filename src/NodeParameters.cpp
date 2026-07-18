@@ -6,6 +6,7 @@
 #include <vector>
 #include <algorithm>
 #include <set>
+#include <cmath>
 
 NodeParameters::NodeParameters(rclcpp::Node& node)
 {
@@ -45,6 +46,13 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<bool>("publish_tfs_between_registrations", true);
     node.declare_parameter<bool>("localizing", true);
     node.declare_parameter<bool>("input_qos_reliable", false);
+    node.declare_parameter<bool>("anchor_map_at_initial_robot_pose", false);
+    // Teach-and-repeat normally reloads a snapshot of the map currently in use.
+    // Preserve the live localized pose in that case; forcing the recorded route
+    // start pose made a robot 2-6 m away appear to be exactly at the start.
+    // If no accepted pose exists yet (cold start), the LoadMap request pose is
+    // still used as the initial localization prior.
+    node.declare_parameter<bool>("preserve_robot_pose_on_map_load", true);
 
     // ── Deskew ──
     node.declare_parameter<bool>("deskew", false);
@@ -68,6 +76,7 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     // ── Map publication crop ──
     // 0.0 = publish full map. Set to e.g. 40.0 to crop to a 40m bubble around
     // the robot — reduces Foxglove WebSocket bandwidth by ~80-90% on large maps.
+    node.declare_parameter<std::string>("map_publication_source", "auto");
     node.declare_parameter<double>("map_publish_radius_m", 0.0);
 
     // ── Quality gate ──
@@ -77,6 +86,7 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<double>("max_velocity_ms", 20.0);
     node.declare_parameter<double>("max_yaw_rate_deg_s", 90.0);
     node.declare_parameter<double>("max_pose_yaw_step_deg", 30.0);
+    node.declare_parameter<double>("max_pose_yaw_odom_residual_deg", 12.0);
     node.declare_parameter<double>("max_pose_step_m", 2.0);
     node.declare_parameter<double>("max_z_jump_m", 0.75);
     node.declare_parameter<double>("max_registration_time_ms", 5000.0);
@@ -97,6 +107,45 @@ void NodeParameters::declareParameters(rclcpp::Node& node)
     node.declare_parameter<double>("min_map_overlap_loose_ratio", 0.50);
     node.declare_parameter<double>("max_map_update_translation_correction_m", 1.50);
     node.declare_parameter<double>("max_map_update_rotation_correction_deg", 12.0);
+    node.declare_parameter<bool>("enable_map_recovery", true);
+    node.declare_parameter<int>("recovery_reload_after_rejections", 4);
+    node.declare_parameter<int>("recovery_attempt_interval_scans", 5);
+    node.declare_parameter<double>("recovery_local_map_radius_m", 45.0);
+    node.declare_parameter<int>("recovery_local_map_min_points", 5000);
+    node.declare_parameter<int>("recovery_local_map_max_points", 60000);
+    node.declare_parameter<int>("snapshot_save_interval_scans", 20);
+    node.declare_parameter<double>("snapshot_max_translation_correction_m", 1.0);
+    node.declare_parameter<double>("snapshot_max_rotation_correction_deg", 5.0);
+    node.declare_parameter<bool>("enable_motion_adaptive_gate", true);
+    node.declare_parameter<double>("adaptive_max_dt_s", 2.0);
+    node.declare_parameter<double>("adaptive_velocity_gain", 1.25);
+    node.declare_parameter<double>("adaptive_acceleration_gain", 0.50);
+    node.declare_parameter<double>("adaptive_yaw_rate_gain", 1.25);
+    node.declare_parameter<double>("aggressive_speed_ms", 2.0);
+    node.declare_parameter<double>("aggressive_yaw_rate_deg_s", 35.0);
+    node.declare_parameter<double>("pivot_linear_speed_ms", 0.75);
+    node.declare_parameter<double>("pivot_yaw_rate_deg_s", 35.0);
+    node.declare_parameter<double>("pivot_max_translation_correction_m", 1.25);
+    node.declare_parameter<bool>("enable_odom_bridge", true);
+    node.declare_parameter<int>("odom_bridge_after_rejections", 0);
+    node.declare_parameter<double>("odom_bridge_min_speed_ms", 1.5);
+    node.declare_parameter<bool>("allow_odom_bridge_map_insertion", false);
+    node.declare_parameter<bool>("enable_planar_pose_constraint", false);
+    node.declare_parameter<double>("planar_pose_max_z_drift_m", 2.0);
+
+    // ── Dynamic trailer self-filter ──
+    node.declare_parameter<bool>("enable_dynamic_trailer_self_filter", true);
+    node.declare_parameter<std::string>("dynamic_trailer_articulation_topic", "/mtt_articulation_angle");
+    node.declare_parameter<double>("dynamic_trailer_stale_timeout_s", 0.5);
+    node.declare_parameter<double>("dynamic_trailer_yaw_offset_rad", M_PI);
+    node.declare_parameter<double>("dynamic_trailer_yaw_sign", -1.0);
+    node.declare_parameter<double>("dynamic_trailer_hitch_x", -1.45);
+    node.declare_parameter<double>("dynamic_trailer_hitch_y", -0.085);
+    node.declare_parameter<double>("dynamic_trailer_front_offset_m", -0.15);
+    node.declare_parameter<double>("dynamic_trailer_rear_offset_m", 2.20);
+    node.declare_parameter<double>("dynamic_trailer_half_width_m", 1.20);
+    node.declare_parameter<double>("dynamic_trailer_z_min_m", -0.35);
+    node.declare_parameter<double>("dynamic_trailer_z_max_m", 2.50);
 }
 
 void NodeParameters::retrieveParameters(rclcpp::Node& node)
@@ -129,6 +178,8 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     node.get_parameter("publish_tfs_between_registrations", publishTfsBetweenRegistrations);
     node.get_parameter("localizing", localizing);
     node.get_parameter("input_qos_reliable", inputQosReliable);
+    node.get_parameter("anchor_map_at_initial_robot_pose", anchorMapAtInitialRobotPose);
+    node.get_parameter("preserve_robot_pose_on_map_load", preserveRobotPoseOnMapLoad);
 
     // ── Deskew ──
     node.get_parameter("deskew", deskew);
@@ -148,6 +199,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     node.get_parameter("compression_voxel_size", compressionVoxelSize);
 
     // ── Map publication crop ──
+    node.get_parameter("map_publication_source", mapPublicationSource);
     node.get_parameter("map_publish_radius_m", mapPublishRadiusM);
 
     // ── Quality gate ──
@@ -157,6 +209,7 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     node.get_parameter("max_velocity_ms", maxVelocityMs);
     node.get_parameter("max_yaw_rate_deg_s", maxYawRateDegS);
     node.get_parameter("max_pose_yaw_step_deg", maxPoseYawStepDeg);
+    node.get_parameter("max_pose_yaw_odom_residual_deg", maxPoseYawOdomResidualDeg);
     node.get_parameter("max_pose_step_m", maxPoseStepM);
     node.get_parameter("max_z_jump_m", maxZJumpM);
     node.get_parameter("max_registration_time_ms", maxRegistrationTimeMs);
@@ -177,6 +230,43 @@ void NodeParameters::retrieveParameters(rclcpp::Node& node)
     node.get_parameter("min_map_overlap_loose_ratio", minMapOverlapLooseRatio);
     node.get_parameter("max_map_update_translation_correction_m", maxMapUpdateTranslationCorrectionM);
     node.get_parameter("max_map_update_rotation_correction_deg", maxMapUpdateRotationCorrectionDeg);
+    node.get_parameter("enable_map_recovery", enableMapRecovery);
+    node.get_parameter("recovery_reload_after_rejections", recoveryReloadAfterRejections);
+    node.get_parameter("recovery_attempt_interval_scans", recoveryAttemptIntervalScans);
+    node.get_parameter("recovery_local_map_radius_m", recoveryLocalMapRadiusM);
+    node.get_parameter("recovery_local_map_min_points", recoveryLocalMapMinPoints);
+    node.get_parameter("recovery_local_map_max_points", recoveryLocalMapMaxPoints);
+    node.get_parameter("snapshot_save_interval_scans", snapshotSaveIntervalScans);
+    node.get_parameter("snapshot_max_translation_correction_m", snapshotMaxTranslationCorrectionM);
+    node.get_parameter("snapshot_max_rotation_correction_deg", snapshotMaxRotationCorrectionDeg);
+    node.get_parameter("enable_motion_adaptive_gate", enableMotionAdaptiveGate);
+    node.get_parameter("adaptive_max_dt_s", adaptiveMaxDtS);
+    node.get_parameter("adaptive_velocity_gain", adaptiveVelocityGain);
+    node.get_parameter("adaptive_acceleration_gain", adaptiveAccelerationGain);
+    node.get_parameter("adaptive_yaw_rate_gain", adaptiveYawRateGain);
+    node.get_parameter("aggressive_speed_ms", aggressiveSpeedMs);
+    node.get_parameter("aggressive_yaw_rate_deg_s", aggressiveYawRateDegS);
+    node.get_parameter("pivot_linear_speed_ms", pivotLinearSpeedMs);
+    node.get_parameter("pivot_yaw_rate_deg_s", pivotYawRateDegS);
+    node.get_parameter("pivot_max_translation_correction_m", pivotMaxTranslationCorrectionM);
+    node.get_parameter("enable_odom_bridge", enableOdomBridge);
+    node.get_parameter("odom_bridge_after_rejections", odomBridgeAfterRejections);
+    node.get_parameter("odom_bridge_min_speed_ms", odomBridgeMinSpeedMs);
+    node.get_parameter("allow_odom_bridge_map_insertion", allowOdomBridgeMapInsertion);
+    node.get_parameter("enable_planar_pose_constraint", enablePlanarPoseConstraint);
+    node.get_parameter("planar_pose_max_z_drift_m", planarPoseMaxZDriftM);
+    node.get_parameter("enable_dynamic_trailer_self_filter", enableDynamicTrailerSelfFilter);
+    node.get_parameter("dynamic_trailer_articulation_topic", dynamicTrailerArticulationTopic);
+    node.get_parameter("dynamic_trailer_stale_timeout_s", dynamicTrailerStaleTimeoutS);
+    node.get_parameter("dynamic_trailer_yaw_offset_rad", dynamicTrailerYawOffsetRad);
+    node.get_parameter("dynamic_trailer_yaw_sign", dynamicTrailerYawSign);
+    node.get_parameter("dynamic_trailer_hitch_x", dynamicTrailerHitchX);
+    node.get_parameter("dynamic_trailer_hitch_y", dynamicTrailerHitchY);
+    node.get_parameter("dynamic_trailer_front_offset_m", dynamicTrailerFrontOffsetM);
+    node.get_parameter("dynamic_trailer_rear_offset_m", dynamicTrailerRearOffsetM);
+    node.get_parameter("dynamic_trailer_half_width_m", dynamicTrailerHalfWidthM);
+    node.get_parameter("dynamic_trailer_z_min_m", dynamicTrailerZMinM);
+    node.get_parameter("dynamic_trailer_z_max_m", dynamicTrailerZMaxM);
 }
 
 void NodeParameters::validateParameters() const
@@ -229,6 +319,14 @@ void NodeParameters::validateParameters() const
     if (publishTfsBetweenRegistrations && mapTfPublishRate <= 0.0f)
     {
         throw std::runtime_error("map_tf_publish_rate must be positive: " + std::to_string(mapTfPublishRate));
+    }
+    if (mapPublicationSource != "auto" &&
+        mapPublicationSource != "local" &&
+        mapPublicationSource != "global")
+    {
+        throw std::runtime_error(
+            "map_publication_source must be one of: auto, local, global. Got: " +
+            mapPublicationSource);
     }
 
     // ── Logic consistency ──
@@ -318,6 +416,12 @@ void NodeParameters::validateParameters() const
         throw std::runtime_error(
             "max_pose_yaw_step_deg must be in (0, 180]: " + std::to_string(maxPoseYawStepDeg));
     }
+    if (maxPoseYawOdomResidualDeg <= 0.0 || maxPoseYawOdomResidualDeg > 180.0)
+    {
+        throw std::runtime_error(
+            "max_pose_yaw_odom_residual_deg must be in (0, 180]: " +
+            std::to_string(maxPoseYawOdomResidualDeg));
+    }
     if (maxPoseStepM <= 0.0)
     {
         throw std::runtime_error(
@@ -369,6 +473,119 @@ void NodeParameters::validateParameters() const
         throw std::runtime_error(
             "max_map_points_before_trim must be positive: " +
             std::to_string(maxMapPointsBeforeTrim));
+    }
+    if (recoveryReloadAfterRejections < 0)
+    {
+        throw std::runtime_error(
+            "recovery_reload_after_rejections must be non-negative: " +
+            std::to_string(recoveryReloadAfterRejections));
+    }
+    if (recoveryAttemptIntervalScans <= 0)
+    {
+        throw std::runtime_error(
+            "recovery_attempt_interval_scans must be positive: " +
+            std::to_string(recoveryAttemptIntervalScans));
+    }
+    if (recoveryLocalMapRadiusM <= 0.0)
+    {
+        throw std::runtime_error(
+            "recovery_local_map_radius_m must be positive: " +
+            std::to_string(recoveryLocalMapRadiusM));
+    }
+    if (recoveryLocalMapMinPoints <= 0)
+    {
+        throw std::runtime_error(
+            "recovery_local_map_min_points must be positive: " +
+            std::to_string(recoveryLocalMapMinPoints));
+    }
+    if (recoveryLocalMapMaxPoints < recoveryLocalMapMinPoints)
+    {
+        throw std::runtime_error(
+            "recovery_local_map_max_points must be >= recovery_local_map_min_points: " +
+            std::to_string(recoveryLocalMapMaxPoints));
+    }
+    if (snapshotSaveIntervalScans <= 0)
+    {
+        throw std::runtime_error(
+            "snapshot_save_interval_scans must be positive: " +
+            std::to_string(snapshotSaveIntervalScans));
+    }
+    if (snapshotMaxTranslationCorrectionM <= 0.0)
+    {
+        throw std::runtime_error(
+            "snapshot_max_translation_correction_m must be positive: " +
+            std::to_string(snapshotMaxTranslationCorrectionM));
+    }
+    if (snapshotMaxRotationCorrectionDeg <= 0.0 || snapshotMaxRotationCorrectionDeg > 180.0)
+    {
+        throw std::runtime_error(
+            "snapshot_max_rotation_correction_deg must be in (0, 180]: " +
+            std::to_string(snapshotMaxRotationCorrectionDeg));
+    }
+    if (adaptiveMaxDtS <= 0.0)
+    {
+        throw std::runtime_error(
+            "adaptive_max_dt_s must be positive: " + std::to_string(adaptiveMaxDtS));
+    }
+    if (adaptiveVelocityGain < 0.0 || adaptiveAccelerationGain < 0.0 || adaptiveYawRateGain < 0.0)
+    {
+        throw std::runtime_error(
+            "adaptive gains must be non-negative.");
+    }
+    if (aggressiveSpeedMs <= 0.0 || aggressiveYawRateDegS <= 0.0 ||
+        pivotLinearSpeedMs < 0.0 || pivotYawRateDegS <= 0.0 ||
+        pivotMaxTranslationCorrectionM <= 0.0)
+    {
+        throw std::runtime_error(
+            "aggressive/pivot thresholds must be positive except pivot_linear_speed_ms which can be zero.");
+    }
+    if (odomBridgeAfterRejections < 0)
+    {
+        throw std::runtime_error(
+            "odom_bridge_after_rejections must be non-negative: " +
+            std::to_string(odomBridgeAfterRejections));
+    }
+    if (odomBridgeMinSpeedMs < 0.0)
+    {
+        throw std::runtime_error(
+            "odom_bridge_min_speed_ms must be non-negative: " +
+            std::to_string(odomBridgeMinSpeedMs));
+    }
+    if (planarPoseMaxZDriftM <= 0.0)
+    {
+        throw std::runtime_error(
+            "planar_pose_max_z_drift_m must be positive: " +
+            std::to_string(planarPoseMaxZDriftM));
+    }
+    if (enableDynamicTrailerSelfFilter)
+    {
+        if (dynamicTrailerArticulationTopic.empty())
+        {
+            throw std::runtime_error(
+                "dynamic_trailer_articulation_topic must be non-empty when dynamic trailer self-filter is enabled.");
+        }
+        if (dynamicTrailerStaleTimeoutS <= 0.0)
+        {
+            throw std::runtime_error(
+                "dynamic_trailer_stale_timeout_s must be positive: " +
+                std::to_string(dynamicTrailerStaleTimeoutS));
+        }
+        if (dynamicTrailerRearOffsetM <= dynamicTrailerFrontOffsetM)
+        {
+            throw std::runtime_error(
+                "dynamic_trailer_rear_offset_m must be > dynamic_trailer_front_offset_m.");
+        }
+        if (dynamicTrailerHalfWidthM <= 0.0)
+        {
+            throw std::runtime_error(
+                "dynamic_trailer_half_width_m must be positive: " +
+                std::to_string(dynamicTrailerHalfWidthM));
+        }
+        if (dynamicTrailerZMaxM <= dynamicTrailerZMinM)
+        {
+            throw std::runtime_error(
+                "dynamic_trailer_z_max_m must be > dynamic_trailer_z_min_m.");
+        }
     }
 }
 

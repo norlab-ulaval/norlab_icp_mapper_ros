@@ -331,7 +331,20 @@ private:
             {
                 Eigen::Vector3f linearDisplacement = robotToMap.topRightCorner(input.getEuclideanDim(), 1) - previousRobotToMap.topRightCorner(input.getEuclideanDim(), 1);
                 float deltaTime = (float) (timeStamp - previousTimeStamp).seconds();
-                Eigen::Vector3f linearVelocity = linearDisplacement / deltaTime;
+                // REP-103: nav_msgs/Odometry.twist must be expressed in
+                // child_frame_id (params->robotFrame), not in the parent
+                // "map" frame. linearDisplacement above is a map-frame
+                // vector; rotate it into the robot frame using the
+                // orientation at the start of the interval, the same
+                // convention mtt_ice_slip_detector_node already applies
+                // defensively on the pose-only path (dx,dy rotated by
+                // prev_yaw). Without this, twist.linear.x/y are map-frame
+                // axis components, not forward/left speed, and only
+                // coincide with true forward speed when the robot happens
+                // to be heading along the map's X axis.
+                Eigen::Matrix3f previousRotation = previousRobotToMap.topLeftCorner(3, 3);
+                Eigen::Vector3f bodyFrameDisplacement = previousRotation.transpose() * linearDisplacement;
+                Eigen::Vector3f linearVelocity = bodyFrameDisplacement / deltaTime;
                 odomMsgOut.twist.twist.linear.x = linearVelocity(0);
                 odomMsgOut.twist.twist.linear.y = linearVelocity(1);
                 odomMsgOut.twist.twist.linear.z = linearVelocity(2);

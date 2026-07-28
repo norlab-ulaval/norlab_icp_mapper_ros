@@ -1,0 +1,73 @@
+mapper:
+  updateCondition:
+    type: delay
+    value: 0.5
+
+  sensorMaxRange: 100.0
+
+  mapperModule:
+    - PointDistanceMapperModule:
+        minDistNewPoint: 0.2
+
+input:
+  - RandomSamplingDataPointsFilter:
+      prob: 0.4
+
+  - MaxDistDataPointsFilter:
+      maxDist: 50.0
+      dim: -1
+
+  - MinDistDataPointsFilter:
+      minDist: 1.0
+      dim: -1
+
+  - SamplingSurfaceNormalDataPointsFilter:
+      ratio: 0.3
+      knn: 10
+      samplingMethod: 0
+      maxBoxDim: 5.0
+      averageExistingDescriptors: 1
+      keepNormals: 1
+      keepDensities: 0
+      keepEigenValues: 0
+      keepEigenVectors: 0
+
+icp:
+  readingDataPointsFilters:
+    - RandomSamplingDataPointsFilter:
+        prob: 0.5
+
+    - MaxDistDataPointsFilter:
+        maxDist: 200.0
+        dim: -1
+
+  referenceDataPointsFilters:
+
+  outlierFilters:
+    - TrimmedDistOutlierFilter:
+        ratio: 0.75
+
+  matcher:
+    KDTreeMatcher:
+      knn: 3
+      epsilon: 1
+      searchType: 1
+      maxDist: 200.0
+
+  errorMinimizer:
+    PointToPlaneErrorMinimizer:
+      force4DOF: 1
+
+  transformationCheckers:
+    - CounterTransformationChecker:
+        maxIterationCount: 40
+    - DifferentialTransformationChecker:
+        minDiffRotErr: 0.001
+        minDiffTransErr: 0.01
+        smoothLength: 4
+
+  inspector: NullInspector
+
+  logger: NullLogger
+
+post:

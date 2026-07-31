@@ -1,7 +1,7 @@
 mapper:
   updateCondition:
-    type: delay
-    value: 0.5
+    type: distance
+    value: 0.1
 
   sensorMaxRange: 100.0
 

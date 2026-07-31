@@ -27,6 +27,9 @@ def generate_launch_description():
                 ),
                 description="Path to the mapper YAML config",
             ),
+            DeclareLaunchArgument(
+                "points_in", default_value="/hesai_lidar/points", description="Input PointCloud2 topic"
+            ),
             Node(
                 package="norlab_icp_mapper_ros",
                 executable="mapper_node",
@@ -55,8 +58,9 @@ def generate_launch_description():
                     }
                 ],
                 remappings=[
-                    ("points_in", "/hesai_lidar/points"),
+                    ("points_in", LaunchConfiguration("points_in")),
                     ("map", "/mapping/map"),
+                    ("icp_odom", "/mapping/icp_odom"),
                     ("icp_odom", "/mapping/icp_odom"),
                     ("scan_after_input_filters", "/mapping/scan_after_input_filters"),
                     ("scan_after_deskew", "/mapping/scan_after_deskew"),
